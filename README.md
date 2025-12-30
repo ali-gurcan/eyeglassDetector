@@ -28,31 +28,38 @@ pip install -r requirements.txt
 
 ## ▶️ Çalıştırma
 
-Varsayılan çalışma şekli başsızdır; tek komutla görüntüyü işler ve sonucu
-dosyaya kaydeder:
+### Batch Modu (Tüm Resimleri İşle)
+
+Varsayılan çalışma şekli batch modudur; `images/` klasöründeki tüm resimleri işler ve sonuçları `output/` klasörüne kaydeder:
 
 ```bash
-python src/main.py \
-  --image images/IMG-6151046557543560876\ copy.png \
-  --output output/IMG-6151046557543560876_copy_detected.png
+# Virtual environment ile
+source .venv/bin/activate
+python src/main.py
+
+# Debug modu ile (ara adımları görmek için)
+python src/main.py --debug
 ```
 
-İsterseniz eşikleri komut satırından da düzenleyebilirsiniz:
+### 🎨 İnteraktif GUI Modu (Renk Seçici)
+
+Modern Tkinter tabanlı GUI ile çerçeve rengini tıklayarak seçebilirsiniz:
 
 ```bash
-python src/main.py --image images/pm0571_m0.jpg \
-  --canny-min 30 --canny-max 160 \
-  --dilation 2 --min-area 80
+# Sistem Python ile (Tkinter desteği için)
+/usr/bin/python3 src/gui.py
+
+# Veya direkt GUI dosyasını çalıştır
+/usr/bin/python3 src/gui.py
 ```
 
-Trackbar arayüzünü açmak için `--interactive` bayrağını eklemeniz yeterlidir.
-Bu modda aşağıdaki ayarlar pencereden kontrol edilir:
+**GUI Kullanımı:**
+1. "Resim Yükle" butonuna tıklayın
+2. Gözlük çerçevesine tıklayarak rengi seçin
+3. Tolerance slider ile hassasiyeti ayarlayın
+4. "Sonucu Kaydet" ile sonucu kaydedin
 
-- `Canny Min` / `Canny Max`: Kenar tespit eşikleri
-- `Dilation`: Kenarları kalınlaştırma iterasyonu
-- `Min Area`: Kontur alan filtreleme eşiği
-
-Trackbar modundan çıkmak için `q` tuşuna basmanız gerekir.
+> **Not:** Homebrew Python'unda Tkinter yoksa sistem Python'unu (`/usr/bin/python3`) kullanın. Paketler otomatik olarak yüklenecektir.
 
 > Not: Sisteminizde OpenCV'nin dahili Haar cascade dosyaları yoksa,
 > `haarcascades/haarcascade_frontalface_default.xml` ve
