@@ -302,9 +302,36 @@ def main():
     parser = argparse.ArgumentParser(description='Aggressive Eyeglass Detection Pipeline')
     parser.add_argument('--debug', action='store_true', 
                        help='Enable debug mode: save intermediate images and detailed logs')
+    parser.add_argument('--gui', action='store_true',
+                       help='Launch Tkinter GUI for interactive color-based detection')
     args = parser.parse_args()
     
     DEBUG_MODE = args.debug
+    
+    # GUI Mode
+    if args.gui:
+        try:
+            import sys
+            from pathlib import Path
+            # Add src directory to path for imports
+            src_dir = Path(__file__).parent
+            if str(src_dir) not in sys.path:
+                sys.path.insert(0, str(src_dir))
+            
+            # Use OpenCV-based GUI (more reliable, no Tkinter dependency)
+            from gui_opencv import OpenCVColorPicker
+            print("🎨 OpenCV GUI başlatılıyor...")
+            app = OpenCVColorPicker()
+            app.run()
+        except ImportError as e:
+            print(f"\n[HATA] GUI modülü bulunamadı: {e}")
+            print("\nAlternatif: Batch modu kullanın:")
+            print("  python3 src/main.py")
+        except Exception as e:
+            print(f"\n[HATA] GUI başlatılamadı: {e}")
+            print("\nAlternatif: Batch modu kullanın:")
+            print("  python3 src/main.py")
+        return
     
     if DEBUG_MODE:
         print("--- Starting AGGRESSIVE DETECTION Pipeline (DEBUG MODE) ---")
