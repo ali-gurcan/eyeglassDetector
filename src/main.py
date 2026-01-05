@@ -65,6 +65,9 @@ def find_frame_candidate(roi_gray, sensitivity='normal', debug_prefix=''):
         'candidates': 0
     }
     
+    h_roi, w_roi = roi_gray.shape
+    roi_area = h_roi * w_roi
+
     # 1. Ön İşleme
     # Bilateral filtre kenarları korur ama gürültüyü atar
     blurred = cv2.bilateralFilter(roi_gray, 9, 75, 75)
@@ -81,12 +84,14 @@ def find_frame_candidate(roi_gray, sensitivity='normal', debug_prefix=''):
     lower = int(max(0, (1.0 - sigma) * v))
     upper = int(min(255, (1.0 + sigma) * v))
     edges = cv2.Canny(enhanced, lower, upper)
+    edges = cv2.Canny(enhanced, lower, upper)
     
     # 3. Morfolojik Kapatma (Boşluk Doldurma)
     # Çerçeve kırıksa birleştir. Yatay kernel kullanıyoruz.
-    k_size = (3, 3) if sensitivity == 'normal' else (5, 5) # Hassas modda daha kalın birleştir
+    k_size = (3, 3) if sensitivity == 'normal' else (5, 5) 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, k_size)
-    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+    # Iteration düşürüldü (2->1): Göz ile birleşmeyi önlemek için.
+    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=1)
     
     # DEBUG: Ara görüntüleri kaydet
     if DEBUG_MODE and debug_prefix:
@@ -100,9 +105,6 @@ def find_frame_candidate(roi_gray, sensitivity='normal', debug_prefix=''):
     # RETR_TREE: İç içe geçmiş her şeyi bul
     contours, hierarchy = cv2.findContours(closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     debug_info['total_contours'] = len(contours)
-    
-    h_roi, w_roi = roi_gray.shape
-    roi_area = h_roi * w_roi
     
     candidates = []
     
