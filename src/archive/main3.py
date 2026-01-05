@@ -162,55 +162,139 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
     
     pupil_x, pupil_y = w_roi // 2, h_roi // 2 # Default center
     if center_roi.size > 0:
-        # YENİ: EN KOYU DAİRESEL NOKTA KÜMESİ (Darkest Circular Blob)
-        # User: "görseldeki en koyu dairesel nokta kümesi göz bebeğidir"
+        # ROBUST PUPIL DETECTION (Multi-Stage Adaptive)
+        # Priority 0: STRICT COLOR CHECK (RGB < 20)
+        # User Rule: "rgb değerlerinin üçü de 20nin altındadır tam siyah olmasa bile"
+        found_pupil = False
+        best_pupil_candidate = None
+        best_pupil_score = -999
         
-        gray_center = center_roi.copy()
-        
-        # 1. En karanlık %10'luk eşik değerini bul (biraz gevşettim)
-        thresh_val = np.percentile(gray_center, 10)
-        
-        # 2. Bu eşiğin altındaki pikselleri maskele
-        _, dark_mask = cv2.threshold(gray_center, thresh_val, 255, cv2.THRESH_BINARY_INV)
-        
-        # 3. Karanlık blob'ları bul
-        blobs, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        best_blob = None
-        best_score = -1
-        
-        for blob in blobs:
-            area = cv2.contourArea(blob)
-            if area < 30: continue  # Çok küçük gürültüyü atla
+        if center_roi_color is not None:
+            # Create mask for pixels where R<20 AND G<20 AND B<20
+            # Note: OpenCV uses BGR
+            lower_black = np.array([0, 0, 0])
+            upper_black = np.array([20, 20, 20])
+            mask_black = cv2.inRange(center_roi_color, lower_black, upper_black)
             
-            # Dairesellik hesapla: 4π * (Alan / Çevre²)
-            perimeter = cv2.arcLength(blob, True)
-            if perimeter == 0: continue
-            circularity = 4 * np.pi * (area / (perimeter * perimeter))
+            # Find blobs in this strict mask
+            cnts_black, _ = cv2.findContours(mask_black, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # En az 0.3 dairesellik gerekli (1.0 = mükemmel daire)
-            if circularity < 0.3: continue
-            
-            # Skor = Dairesellik * Alan (büyük ve yuvarlak = iyi)
-            score = circularity * area
-            
-            if score > best_score:
-                best_score = score
-                best_blob = blob
+            if cnts_black:
+                # Find the largest valid blob
+                # CHANGE: Increased min_area to 75 (User: "Slightly Larger Black Dot")
+                valid_black_blobs = [c for c in cnts_black if cv2.contourArea(c) > 75] 
+                if valid_black_blobs:
+                    largest_black = max(valid_black_blobs, key=cv2.contourArea)
+                    M = cv2.moments(largest_black)
+                    if M["m00"] > 0:
+                        cx = int(M["m10"] / M["m00"])
+                        cy = int(M["m01"] / M["m00"])
+                        
+                        best_pupil_candidate = (cx, cy)
+                        pupil_x = cx + margin_w
+                        pupil_y = cy + margin_h
+                        found_pupil = True
+                        best_pupil_score = 10000
+
+        # Priority 0.5: HAAR CASCADE (Standard Robustness)
+        # If strict color failed, trust the cascade if provided
+        if not found_pupil and eye_cascade is not None:
+             # Run Cascade on the ENHANCED ROI (or blurred)
+             # Cascade expects standard contrast
+             # Important: Cascade runs on the whole ROI, but returns relative coords
+             eyes = eye_cascade.detectMultiScale(center_roi, 1.1, 3, minSize=(15, 15))
+             
+             if len(eyes) > 0:
+                 # Find the largest eye (assumption: ROI mostly contains one eye)
+                 ex, ey, ew, eh = sorted(eyes, key=lambda e: e[2]*e[3], reverse=True)[0]
+                 # Set candidate relative to center_roi (consistent with other methods)
+                 best_pupil_candidate = (ex + ew // 2, ey + eh // 2)
+                 found_pupil = True
+                 best_pupil_score = 5000 # High priority but less than strict color
         
-        if best_blob is not None:
-            # En iyi dairesel blob'un merkezini al
-            M = cv2.moments(best_blob)
-            if M["m00"] > 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                pupil_x = cx + margin_w
-                pupil_y = cy + margin_h
+        # Priority 1-3: Adaptive Search (Hybrid/Fallback)
+        if not found_pupil:
+             # Search ONLY in center_roi to avoid eyebrows
+             # CHANGE: Increased min_area thresholds
+             adaptive_params = [
+                 {'name': 'static_strict', 'thresh_pct': 15, 'min_circ': 0.5, 'min_area': 70},
+                 {'name': 'static_relaxed', 'thresh_pct': 25, 'min_circ': 0.3, 'min_area': 50},
+                 {'name': 'static_desperate', 'thresh_pct': 40, 'min_circ': 0.15, 'min_area': 30}
+             ]
+             
+             roi_blurred_pupil = cv2.GaussianBlur(center_roi, (7, 7), 0)
+             
+             for stage in adaptive_params:
+                 candidates = []
+            
+                 # METHOD A: HOUGH CIRCLES (Gradient)
+                 # Only in earlier stages to avoid false positives
+                 if stage['name'] != 'static_desperate':
+                     try:
+                         circles = cv2.HoughCircles(
+                             roi_blurred_pupil, cv2.HOUGH_GRADIENT, dp=1.2, minDist=20,
+                             param1=50, param2=30, minRadius=5, maxRadius=25
+                         )
+                         if circles is not None:
+                             circles = np.uint16(np.around(circles))
+                             for i in circles[0, :]:
+                                 cx_h, cy_h, r_h = i[0], i[1], i[2]
+                                 # Create a dummy contour for consistency
+                                 # Approximation of circle as polygon
+                                 h_pts = cv2.ellipse2Poly((int(cx_h), int(cy_h)), (int(r_h), int(r_h)), 0, 0, 360, 10)
+                                 h_cnt = h_pts.reshape(-1, 1, 2)
+                                 candidates.append(h_cnt)
+                     except:
+                         pass
+
+                 # METHOD B: BLOB DETECTION (Intensity)
+                 min_val, _, _, _ = cv2.minMaxLoc(roi_blurred_pupil)
+                 # Dynamic thresholding based on darkness percentile
+                 thresh_val = min_val + (255 - min_val) * (stage['thresh_pct'] / 100.0)
+                 _, binary_map = cv2.threshold(roi_blurred_pupil, thresh_val, 255, cv2.THRESH_BINARY_INV)
+                 
+                 blobs, _ = cv2.findContours(binary_map, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                 for b in blobs:
+                     area = cv2.contourArea(b)
+                     if area < stage['min_area']: continue
+                     
+                     # Circularity Check
+                     perimeter = cv2.arcLength(b, True)
+                     if perimeter == 0: continue
+                     circularity = 4 * np.pi * (area / (perimeter * perimeter))
+                     
+                     if circularity > stage['min_circ']:
+                         candidates.append(b)
+                 
+                 # EVALUATE CANDIDATES (Sclera Contrast Score)
+                 for cand in candidates:
+                     M = cv2.moments(cand)
+                     if M["m00"] == 0: continue
+                     cx = int(M["m10"] / M["m00"])
+                     cy = int(M["m01"] / M["m00"])
+                     
+                     # Radius approximation
+                     _, radius = cv2.minEnclosingCircle(cand)
+                     
+                     score = calculate_sclera_contrast(roi_blurred_pupil, (cx, cy), pupil_radius=int(radius))
+                     
+                     if score > best_pupil_score:
+                         best_pupil_score = score
+                         best_pupil_candidate = (cx, cy)
+                         found_pupil = True
+                 
+                 # If we found a good candidate in this stage, stop
+                 if found_pupil and best_pupil_score > 30: # 30 is a decent contrast threshold
+                     break
+        
+        if found_pupil:
+             pupil_x = best_pupil_candidate[0] + margin_w
+             pupil_y = best_pupil_candidate[1] + margin_h
         else:
-            # Fallback: Klasik minMaxLoc (en karanlık tek piksel)
-            _, _, min_loc, _ = cv2.minMaxLoc(gray_center)
-            pupil_x = min_loc[0] + margin_w
-            pupil_y = min_loc[1] + margin_h
+             # Fallback: Klasik minMaxLoc
+             _, _, min_loc_simple, _ = cv2.minMaxLoc(roi_blurred_pupil)
+             pupil_x = min_loc_simple[0] + margin_w
+             pupil_y = min_loc_simple[1] + margin_h
              
     if DEBUG_MODE and debug_prefix:
         # DEBUG: Göz tespitinin sonucunu hemen göster
@@ -218,6 +302,10 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
         debug_path.mkdir(exist_ok=True)
         pupil_vis = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
         cv2.circle(pupil_vis, (pupil_x, pupil_y), 5, (0, 0, 255), -1)
+        # Sclera contrast değerini yaz
+        if found_pupil:
+             cv2.putText(pupil_vis, f"Score: {best_pupil_score:.1f}", (10, 20), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         cv2.imwrite(str(debug_path / f"{debug_prefix}_01_pupil_loc.png"), pupil_vis)
 
     if use_mask:

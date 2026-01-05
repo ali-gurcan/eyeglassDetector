@@ -162,50 +162,25 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
     
     pupil_x, pupil_y = w_roi // 2, h_roi // 2 # Default center
     if center_roi.size > 0:
-        # YENİ: EN KOYU DAİRESEL NOKTA KÜMESİ (Darkest Circular Blob)
-        # User: "görseldeki en koyu dairesel nokta kümesi göz bebeğidir"
+        # YENİ: EN KARANLIK MERKEZ ALGORİTMASI (Darkest Centroid)
+        # User: "bu mantık iyi olmadı daha iyi bir mantık geliştir"
+        # Basit ve güvenilir: En karanlık %5'lik piksellerin ağırlık merkezi
         
         gray_center = center_roi.copy()
         
-        # 1. En karanlık %10'luk eşik değerini bul (biraz gevşettim)
-        thresh_val = np.percentile(gray_center, 10)
+        # 1. En karanlık %5'lik eşik değerini bul
+        thresh_val = np.percentile(gray_center, 5)
         
         # 2. Bu eşiğin altındaki pikselleri maskele
         _, dark_mask = cv2.threshold(gray_center, thresh_val, 255, cv2.THRESH_BINARY_INV)
         
-        # 3. Karanlık blob'ları bul
-        blobs, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        best_blob = None
-        best_score = -1
-        
-        for blob in blobs:
-            area = cv2.contourArea(blob)
-            if area < 30: continue  # Çok küçük gürültüyü atla
-            
-            # Dairesellik hesapla: 4π * (Alan / Çevre²)
-            perimeter = cv2.arcLength(blob, True)
-            if perimeter == 0: continue
-            circularity = 4 * np.pi * (area / (perimeter * perimeter))
-            
-            # En az 0.3 dairesellik gerekli (1.0 = mükemmel daire)
-            if circularity < 0.3: continue
-            
-            # Skor = Dairesellik * Alan (büyük ve yuvarlak = iyi)
-            score = circularity * area
-            
-            if score > best_score:
-                best_score = score
-                best_blob = blob
-        
-        if best_blob is not None:
-            # En iyi dairesel blob'un merkezini al
-            M = cv2.moments(best_blob)
-            if M["m00"] > 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                pupil_x = cx + margin_w
-                pupil_y = cy + margin_h
+        # 3. Karanlık bölgenin ağırlık merkezini hesapla
+        M = cv2.moments(dark_mask)
+        if M["m00"] > 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            pupil_x = cx + margin_w
+            pupil_y = cy + margin_h
         else:
             # Fallback: Klasik minMaxLoc (en karanlık tek piksel)
             _, _, min_loc, _ = cv2.minMaxLoc(gray_center)
