@@ -7,9 +7,23 @@ Derin öğrenme (Deep Learning) modelleri yerine, **OpenCV** kütüphanesi ile t
 ## 🎯 Proje Özellikleri
 
 * **ROI Odaklı Analiz:** Tüm görüntü yerine Haar Cascade sınıflandırıcıları ile sadece yüz ve göz bölgesine odaklanarak işlem yükünü azaltır ve doğruluğu artırır.
-* **Canlı Parametre Ayarı (Trackbars):** Işık koşullarına göre `Canny Edge Threshold` ve `Dilation` değerlerini gerçek zamanlı ayarlamak için kullanıcı arayüzü sunar.
-* **Gürültü Filtreleme:** Gaussian Blur ve Kontur Alanı (Contour Area) filtreleri ile çerçeve dışındaki detayları (kirpik, yansıma vb.) eler.
-* **Görselleştirme:** Tespit edilen çerçeveleri orijinal görüntü üzerinde renklendirerek gösterir.
+* **Gradient Tabanlı Göz Bebeği Tespiti:** Timm-Barth yöntemine dayalı gradyan tabanlı algoritma ile değişken aydınlatma koşullarında güvenilir göz bebeği lokalizasyonu.
+* **Çok Aşamalı Yeniden Deneme:** Normal, akıllı retry ve gevşek mod olmak üzere üç aşamalı strateji ile zorlu görüntülerde bile yüksek tespit oranı.
+* **Adaptif Kenar Tespiti:** Canny algoritması ile görüntü istatistiklerine göre adaptif eşik değerleri.
+* **Morfolojik İşlemler:** Kopuk çerçeve parçalarını birleştirmek için agresif morfolojik kapatma işlemleri.
+* **Simetri Kontrolü:** Sol ve sağ göz için tespit edilen alanlar arasındaki simetri kontrolü ile dengeli tespit.
+* **Görselleştirme:** Tespit edilen çerçeveleri orijinal görüntü üzerinde sarı renkte işaretler.
+
+## 📊 Test Sonuçları
+
+Sistem 22 farklı yüz görüntüsü üzerinde test edilmiştir:
+
+* **Toplam Görüntü:** 22
+* **Başarılı Tespit:** 19
+* **Başarısız Tespit:** 3
+* **Başarı Oranı:** **86.36%**
+
+Başarılı tespitlerden 18 görüntüde 2 çerçeve, 1 görüntüde 1 çerçeve tespit edilmiştir.
 
 ## 🛠️ Kullanılan Teknolojiler
 
@@ -41,41 +55,51 @@ python src/main.py
 python src/main.py --debug
 ```
 
-### 🎨 İnteraktif GUI Modu (Renk Seçici)
+Debug modu, işleme adımlarının ara görüntülerini `debug/` klasörüne kaydeder.
 
-Modern Tkinter tabanlı GUI ile çerçeve rengini tıklayarak seçebilirsiniz:
-
-```bash
-# Sistem Python ile (Tkinter desteği için)
-/usr/bin/python3 src/gui.py
-
-# Veya direkt GUI dosyasını çalıştır
-/usr/bin/python3 src/gui.py
-```
-
-**GUI Kullanımı:**
-1. "Resim Yükle" butonuna tıklayın
-2. Gözlük çerçevesine tıklayarak rengi seçin
-3. Tolerance slider ile hassasiyeti ayarlayın
-4. "Sonucu Kaydet" ile sonucu kaydedin
-
-> **Not:** Homebrew Python'unda Tkinter yoksa sistem Python'unu (`/usr/bin/python3`) kullanın. Paketler otomatik olarak yüklenecektir.
-
-> Not: Sisteminizde OpenCV'nin dahili Haar cascade dosyaları yoksa,
+> **Not:** Sisteminizde OpenCV'nin dahili Haar cascade dosyaları yoksa,
 > `haarcascades/haarcascade_frontalface_default.xml` ve
-> `haarcascades/haarcascade_eye.xml` dosyalarını `haarcascades/` klasörüne
+> `haarcascades/haarcascade_eye_tree_eyeglasses.xml` dosyalarını `haarcascades/` klasörüne
 > indirmeniz gerekir. OpenCV'nin resmi GitHub deposundaki XML dosyaları
 > kullanılabilir.
 
 ## 📂 Proje Yapısı
 
 ```text
-glasses-detection-project/
+glass/
 │
 ├── src/
-│   └── main.py          # Ana uygulama kodu
+│   ├── main.py          # Ana uygulama kodu
+│   └── archive/         # Eski versiyonlar
 ├── images/              # Test edilecek örnek fotoğraflar
 ├── output/              # İşlenmiş ve işaretlenmiş çıktıların kaydedildiği klasör
-├── haarcascades/        # (Opsiyonel) .xml model dosyaları
+├── debug/               # Debug modunda ara adımlar (opsiyonel)
+├── folder/
+│   └── report.latex    # IEEE formatında akademik rapor
+├── haarcascades/        # Haar Cascade XML model dosyaları
 ├── requirements.txt     # Gerekli kütüphane listesi
 └── README.md            # Proje dokümantasyonu
+```
+
+## 🔗 GitHub Repository
+
+Proje kaynak kodu ve dokümantasyon:
+
+**GitHub Repository:** [https://github.com/ali-gurcan/eyeglassDetector](https://github.com/ali-gurcan/eyeglassDetector)
+
+## 📝 Algoritma Akışı
+
+1. **Yüz Tespiti:** Haar Cascade ile yüz bölgesi tespit edilir
+2. **Göz Bölgesi Çıkarımı:** Yüzün üst %20-60 aralığından sol ve sağ göz bölgeleri çıkarılır
+3. **Göz Bebeği Lokalizasyonu:** Gradient tabanlı yöntem ile göz bebeği merkezi bulunur
+4. **Ön İşleme:** Bilateral filtre ve CLAHE ile kontrast artırılır
+5. **Kenar Tespiti:** Adaptif Canny algoritması ile kenarlar bulunur
+6. **Morfolojik İşlemler:** Kopuk parçalar birleştirilir
+7. **Kontur Analizi:** RETR_TREE modu ile iç ve dış konturlar bulunur
+8. **Filtreleme:** Alan, en-boy oranı, solidity ve konum filtreleri uygulanır
+9. **Yeniden Deneme:** Gerekirse gevşek mod ve agresif parametrelerle tekrar denenir
+10. **Sonuç:** Tespit edilen çerçeveler görüntü üzerine çizilir
+
+## 🎓 Lisans
+
+Bu proje eğitim amaçlı geliştirilmiştir.
