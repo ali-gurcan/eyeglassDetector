@@ -34,10 +34,30 @@ Başarılı tespitlerden 18 görüntüde 2 çerçeve, 1 görüntüde 1 çerçeve
 
 ## 🚀 Kurulum
 
+### Yerel Kurulum
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+### Docker ile Kurulum
+
+Docker kullanarak projeyi çalıştırmak için:
+
+```bash
+# Docker image oluştur
+docker build -t eyeglass-detector .
+
+# Container çalıştır
+docker run -v $(pwd)/images:/app/images -v $(pwd)/output:/app/output eyeglass-detector
+```
+
+Veya docker-compose kullanarak:
+
+```bash
+docker-compose up
 ```
 
 ## ▶️ Çalıştırma
@@ -78,6 +98,9 @@ glass/
 │   └── report.latex    # IEEE formatında akademik rapor
 ├── haarcascades/        # Haar Cascade XML model dosyaları
 ├── requirements.txt     # Gerekli kütüphane listesi
+├── Dockerfile           # Docker image tanımı
+├── docker-compose.yml   # Docker Compose konfigürasyonu
+├── .dockerignore        # Docker ignore dosyası
 └── README.md            # Proje dokümantasyonu
 ```
 
