@@ -124,6 +124,82 @@ def calculate_sclera_contrast(roi_gray, pupil_center, pupil_radius=5):
     
     return contrast + area_score - penalty
 
+def get_precise_pupil_center(roi_gray):
+    """
+    TIMM-BARTH Gradient-Based Pupil Detection
+    "Accurate Eye Centre Localisation by Means of Gradients" (2011)
+    
+    Finds the point where the most gradient vectors converge (pupil center).
+    Robust to illumination changes and low contrast.
+    """
+    h, w = roi_gray.shape
+    if h < 10 or w < 10:
+        return w // 2, h // 2
+    
+    # 1. Downsample for speed (work on smaller image)
+    scale = 0.5
+    small = cv2.resize(roi_gray, None, fx=scale, fy=scale)
+    sh, sw = small.shape
+    
+    # 2. Calculate gradients (Sobel)
+    grad_x = cv2.Sobel(small, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(small, cv2.CV_64F, 0, 1, ksize=3)
+    
+    # 3. Gradient magnitude for weighting
+    magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    
+    # Only use strong gradients (threshold)
+    grad_thresh = np.percentile(magnitude, 70)
+    mask = magnitude > grad_thresh
+    
+    # Normalize gradients
+    magnitude_safe = np.maximum(magnitude, 1e-6)
+    gx_norm = grad_x / magnitude_safe
+    gy_norm = grad_y / magnitude_safe
+    
+    # 4. Objective function: Find center where gradients point to
+    # Initialize accumulator
+    accumulator = np.zeros((sh, sw), dtype=np.float64)
+    
+    # Create coordinate grids
+    Y, X = np.ogrid[:sh, :sw]
+    
+    # For each candidate center, calculate dot product sum
+    for cy in range(2, sh - 2, 2):  # Step by 2 for speed
+        for cx in range(2, sw - 2, 2):
+            # Vector from (cx, cy) to each pixel
+            dx = X - cx
+            dy = Y - cy
+            dist = np.sqrt(dx**2 + dy**2 + 1e-6)
+            
+            # Normalize displacement vectors
+            dx_norm = dx / dist
+            dy_norm = dy / dist
+            
+            # Dot product: gradient · displacement
+            dot = gx_norm * dx_norm + gy_norm * dy_norm
+            
+            # Only count positive dot products (vectors pointing towards center)
+            dot = np.maximum(dot, 0)
+            
+            # Weight by gradient magnitude and mask
+            weighted = dot * magnitude * mask
+            
+            # Accumulate
+            accumulator[cy, cx] = np.sum(weighted)
+    
+    # 5. Apply Gaussian blur to smooth accumulator
+    accumulator = cv2.GaussianBlur(accumulator, (5, 5), 0)
+    
+    # 6. Find maximum (pupil center)
+    _, _, _, max_loc = cv2.minMaxLoc(accumulator)
+    
+    # Scale back to original size
+    pupil_x = int(max_loc[0] / scale)
+    pupil_y = int(max_loc[1] / scale)
+    
+    return pupil_x, pupil_y
+
 def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity='normal', debug_prefix='', morph_iters=1, use_mask=False):
     """
     Core detection logic with variable sensitivity.
@@ -162,55 +238,11 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
     
     pupil_x, pupil_y = w_roi // 2, h_roi // 2 # Default center
     if center_roi.size > 0:
-        # YENİ: EN KOYU DAİRESEL NOKTA KÜMESİ (Darkest Circular Blob)
-        # User: "görseldeki en koyu dairesel nokta kümesi göz bebeğidir"
-        
-        gray_center = center_roi.copy()
-        
-        # 1. En karanlık %10'luk eşik değerini bul (biraz gevşettim)
-        thresh_val = np.percentile(gray_center, 10)
-        
-        # 2. Bu eşiğin altındaki pikselleri maskele
-        _, dark_mask = cv2.threshold(gray_center, thresh_val, 255, cv2.THRESH_BINARY_INV)
-        
-        # 3. Karanlık blob'ları bul
-        blobs, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        best_blob = None
-        best_score = -1
-        
-        for blob in blobs:
-            area = cv2.contourArea(blob)
-            if area < 30: continue  # Çok küçük gürültüyü atla
-            
-            # Dairesellik hesapla: 4π * (Alan / Çevre²)
-            perimeter = cv2.arcLength(blob, True)
-            if perimeter == 0: continue
-            circularity = 4 * np.pi * (area / (perimeter * perimeter))
-            
-            # En az 0.3 dairesellik gerekli (1.0 = mükemmel daire)
-            if circularity < 0.3: continue
-            
-            # Skor = Dairesellik * Alan (büyük ve yuvarlak = iyi)
-            score = circularity * area
-            
-            if score > best_score:
-                best_score = score
-                best_blob = blob
-        
-        if best_blob is not None:
-            # En iyi dairesel blob'un merkezini al
-            M = cv2.moments(best_blob)
-            if M["m00"] > 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                pupil_x = cx + margin_w
-                pupil_y = cy + margin_h
-        else:
-            # Fallback: Klasik minMaxLoc (en karanlık tek piksel)
-            _, _, min_loc, _ = cv2.minMaxLoc(gray_center)
-            pupil_x = min_loc[0] + margin_w
-            pupil_y = min_loc[1] + margin_h
+        # YENİ: get_precise_pupil_center ile sağlam göz bebeği tespiti
+        # (Glare removal + Morph opening + Gaussian center bias)
+        rel_x, rel_y = get_precise_pupil_center(center_roi)
+        pupil_x = rel_x + margin_w
+        pupil_y = rel_y + margin_h
              
     if DEBUG_MODE and debug_prefix:
         # DEBUG: Göz tespitinin sonucunu hemen göster
@@ -227,7 +259,7 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
         # 1. Yumuşak Maske Oluştur
         # CHANGE: Alan son kez ayarlandı (%18 Width, %16 Height)
         # User Feedback: "genişlik 18 yükseklik 16 olsun"
-        axes = (int(w_roi * 0.18), int(h_roi * 0.16))
+        axes = (int(w_roi * 0.18), int(h_roi * 0.15))
         
         mask = np.zeros_like(enhanced, dtype=np.float32)
         cv2.ellipse(mask, (pupil_x, pupil_y), axes, 0, 0, 360, 1.0, -1)
@@ -521,14 +553,10 @@ def process_single_eye_roi(roi_gray, roi_color_crop, eye_cascade, full_image, of
         )
         
     found_area = 0
+    best_cnt_offset = None
     if best_cnt is not None:
         found_area = cv2.contourArea(best_cnt)
-        
-        # CHANGE: Convex Hull KAPALI. Doğrudan konturu çiz.
-        contour_offset = best_cnt + [offset_x, offset_y]
-        
-        # Çizim (Cyan, Kalınlık 2) -> Draw on full_image
-        cv2.drawContours(full_image, [contour_offset], -1, (255, 255, 0), 2)
+        best_cnt_offset = best_cnt + [offset_x, offset_y]
         
         combined_debug = {
             'mode_used': 'normal' if debug_info_relaxed.get('total_contours', 0) == 0 else 'relaxed',
@@ -536,14 +564,14 @@ def process_single_eye_roi(roi_gray, roi_color_crop, eye_cascade, full_image, of
             'retry': debug_info_retry,
             'relaxed': debug_info_relaxed
         }
-        return 1, combined_debug, found_area
+        return 1, combined_debug, found_area, best_cnt_offset
             
     combined_debug = {
         'mode_used': 'failed',
         'normal': debug_info_normal,
         'relaxed': debug_info_relaxed
     }
-    return 0, combined_debug, 0
+    return 0, combined_debug, 0, None
 
 def process_image(img_path, face_cascade, eye_cascade):
     input_path = Path(img_path)
@@ -586,7 +614,7 @@ def process_image(img_path, face_cascade, eye_cascade):
         roi_y_end = int(fy + fh * 0.60)
         roi_x_mid = int(fx + fw / 2)
         
-        # Static Strip ROI
+        # Static Strip ROI (sabit bölme - en stabil yöntem)
         coords = [
             (fx, roi_y_start, roi_x_mid, roi_y_end, fx, roi_y_start, 'left'),
             (roi_x_mid, roi_y_start, fx+fw, roi_y_end, roi_x_mid, roi_y_start, 'right')
@@ -597,7 +625,6 @@ def process_image(img_path, face_cascade, eye_cascade):
             x1=max(0, x1); x2=min(gray.shape[1], x2)
             
             roi_g = gray[y1:y2, x1:x2]
-            # NEW: Extract Color ROI for RGB Check
             roi_c = img[y1:y2, x1:x2]
             
             if roi_g.size == 0 or roi_g.shape[0] < 10 or roi_g.shape[1] < 10:
@@ -606,7 +633,7 @@ def process_image(img_path, face_cascade, eye_cascade):
             debug_prefix = f"{input_path.stem}_face{face_idx}_{side}" if DEBUG_MODE else ""
             
             # 1. INITIAL PASS
-            hulls_found, debug_info, area = process_single_eye_roi(roi_g, roi_c, eye_cascade, img, off_x, off_y, debug_prefix)
+            hulls_found, debug_info, area, cnt_offset = process_single_eye_roi(roi_g, roi_c, eye_cascade, img, off_x, off_y, debug_prefix)
             
             # Store everything needed for potential retry
             eye_args = (roi_g, roi_c, eye_cascade, img, off_x, off_y, debug_prefix)
@@ -614,6 +641,7 @@ def process_image(img_path, face_cascade, eye_cascade):
                 'found': hulls_found,
                 'debug': debug_info,
                 'area': area,
+                'cnt': cnt_offset,
                 'args': eye_args
             }
             
@@ -640,19 +668,25 @@ def process_image(img_path, face_cascade, eye_cascade):
                     
                     # RETRY with FORCED ITERATIONS (Aggressive Join)
                     args = target_res['args']
-                    new_found, new_debug, new_area = process_single_eye_roi(*args, forced_iters=2)
+                    new_found, new_debug, new_area, new_cnt = process_single_eye_roi(*args, forced_iters=2)
                     
                     # Update if improved (or at least valid)
                     sides[target_side]['found'] = new_found
                     sides[target_side]['debug'] = new_debug
                     sides[target_side]['area'] = new_area
+                    sides[target_side]['cnt'] = new_cnt
                     sides[target_side]['debug']['symmetry_retry'] = True
 
-    # 3. CONSOLIDATE RESULTS
+    # 3. CONSOLIDATE RESULTS & DRAW
     for face_idx, sides in eye_results.items():
         for side, res in sides.items():
             total_hulls += res['found']
             debug_info = res['debug']
+            
+            # DRAW FINAL CONTOUR ONLY ONCE HERE
+            if res['cnt'] is not None:
+                cv2.drawContours(img, [res['cnt']], -1, (255, 255, 0), 2)
+
             if DEBUG_MODE:
                 debug_info['side'] = side
                 debug_info['face_idx'] = face_idx
@@ -662,7 +696,7 @@ def process_image(img_path, face_cascade, eye_cascade):
     cv2.imwrite(str(output_path), img)
     
     if total_hulls > 0:
-        print(f"[BASARILI] {filename} -> {total_hulls} çerçeve bulundu.")
+        print(f"[BASARILI] {filename} -> {total_hulls} cam bulundu.")
     else:
         print(f"[UYARI] {filename} -> Tüm denemelere rağmen bulunamadı.")
     
