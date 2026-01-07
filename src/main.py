@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Aggressive Eyeglass Detection (No-Fail Edition)
+Aggressive Eyeglass Detection 
 ----------------------------------------
 Priorities:
 1. Detection Rate > Aesthetics. (Find it even if it's messy).
@@ -8,7 +8,6 @@ Priorities:
 3. Retry Mechanism: If strict parameters fail, retry with relaxed ones.
 4. RETR_TREE: Look for inner frame boundaries if outer ones are lost.
 
-Author: Senior CV Engineer (AI Assistant)
 """
 
 import glob
@@ -200,7 +199,73 @@ def get_precise_pupil_center(roi_gray):
     
     return pupil_x, pupil_y
 
-def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity='normal', debug_prefix='', morph_iters=1, use_mask=False):
+def scale_contour(cnt, scale):
+    M = cv2.moments(cnt)
+    if M['m00'] == 0: return cnt
+    cx = int(M['m10']/M['m00'])
+    cy = int(M['m01']/M['m00'])
+
+    cnt_norm = cnt - [cx, cy]
+    cnt_scaled = cnt_norm * scale
+    cnt_scaled = cnt_scaled + [cx, cy]
+    return cnt_scaled.astype(np.int32)
+
+def radial_edge_scan(roi, pupil_center, est_radius, guided_mode=False):
+    h, w = roi.shape
+    px, py = pupil_center
+    rim_points = []
+    
+    # Pre-calculate gradients for edge strength
+    grad_x = cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(roi, cv2.CV_64F, 0, 1, ksize=3)
+    magnitude = cv2.magnitude(grad_x, grad_y)
+    magnitude = cv2.GaussianBlur(magnitude, (3,3), 0)
+    
+    # Scan 72 rays (every 5 degrees)
+    angles = np.deg2rad(np.arange(0, 360, 5))
+    
+    if guided_mode:
+        # Tighter search, lower threshold
+        r_min = int(est_radius * 0.8)
+        r_max = int(est_radius * 1.2)
+        threshold = 12
+    else:
+        # Broad search, standard threshold
+        r_min = int(est_radius * 0.6)
+        r_max = int(est_radius * 1.4)
+        threshold = 12
+    
+    overall_max_val = 0
+    
+    for theta in angles:
+        best_val = 0
+        best_pt = None
+        
+        # Scan along the ray
+        for r in range(r_min, r_max, 2):
+            x = int(px + r * np.cos(theta))
+            y = int(py + r * np.sin(theta))
+            
+            if 0 <= x < w and 0 <= y < h:
+                val = magnitude[y, x]
+                if val > best_val:
+                    best_val = val
+                    best_pt = [x, y]
+        
+        if best_val > overall_max_val:
+            overall_max_val = best_val
+            
+        # Peak must be strong enough
+        if best_pt is not None and best_val > threshold:
+            rim_points.append(best_pt)
+            
+    if len(rim_points) < 5: 
+        if DEBUG_MODE:
+            print(f"      [FAIL] Radial Scan: Found {len(rim_points)} points (needed 5). Max Grad={overall_max_val:.1f} (Thresh={threshold})")
+        return []
+    return np.array(rim_points, dtype=np.int32)
+
+def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity='normal', debug_prefix='', morph_iters=1, use_mask=False, pupil_center=None, inflate=False, guided_radius=None):
     """
     Core detection logic with variable sensitivity.
     Returns: (best_contour, debug_info_dict)
@@ -216,85 +281,139 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
     
     h_roi, w_roi = roi_gray.shape
     roi_area = h_roi * w_roi
-
-    # 1. Ön İşleme
-    blurred = cv2.bilateralFilter(roi_gray, 9, 75, 75)
     
-    clip_limit = 2.0 if sensitivity == 'normal' else 4.0
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8,8))
-    enhanced = clahe.apply(blurred)
-    
-    # -- STEP 0: PUPIL DETECTION (Her şeyden önce) --
-    # Göz merkezini bul (Always run this)
-    # CHANGE: Tightened margins to 0.30 (Central 40% only)
-    margin_h = int(h_roi * 0.30)
-    margin_w = int(w_roi * 0.30)
-    center_roi = enhanced[margin_h:-margin_h, margin_w:-margin_w]
-    # Extract color ROI as well
-    if roi_color_crop is not None:
-         center_roi_color = roi_color_crop[margin_h:-margin_h, margin_w:-margin_w]
+    # Estimate Frame Scale (Reference)
+    if guided_radius is not None:
+        est_frame_radius = int(guided_radius)
     else:
-         center_roi_color = None
-    
-    pupil_x, pupil_y = w_roi // 2, h_roi // 2 # Default center
-    if center_roi.size > 0:
-        # YENİ: get_precise_pupil_center ile sağlam göz bebeği tespiti
-        # (Glare removal + Morph opening + Gaussian center bias)
-        rel_x, rel_y = get_precise_pupil_center(center_roi)
-        pupil_x = rel_x + margin_w
-        pupil_y = rel_y + margin_h
-             
-    if DEBUG_MODE and debug_prefix:
-        # DEBUG: Göz tespitinin sonucunu hemen göster
-        debug_path = Path("debug")
-        debug_path.mkdir(exist_ok=True)
-        pupil_vis = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
-        cv2.circle(pupil_vis, (pupil_x, pupil_y), 5, (0, 0, 255), -1)
-        cv2.imwrite(str(debug_path / f"{debug_prefix}_01_pupil_loc.png"), pupil_vis)
+        # Glasses are typically ~40-50% of the ROI width in diameter.
+        est_frame_radius = int(w_roi * 0.22)
 
-    if use_mask:
-        # DYNAMIC PUPIL BLURRING (Akıllı Göz Bulanıklaştırma)
-        # Bulduğumuz pupil noktasına göre devasa alanı blurla.
+    # 1. Ön İşleme & Kenar Tespiti Stratejisi
+    edges = None
+    
+    if sensitivity == 'metallic':
+        # STRATEGY: Adaptive Thresholding on Green Channel
+        # Metallic frames often contrast best in Green.
+        # Adaptive Threshold finds local differences (thin lines) better than Canny.
         
-        # 1. Yumuşak Maske Oluştur
-        # CHANGE: Alan son kez ayarlandı (%18 Width, %16 Height)
-        # User Feedback: "genişlik 18 yükseklik 16 olsun"
-        axes = (int(w_roi * 0.18), int(h_roi * 0.15))
+        # Use Green channel if available, else Gray
+        if roi_color_crop is not None:
+            # BGR -> G channel is index 1
+            source_img = roi_color_crop[:, :, 1]
+        else:
+            source_img = roi_gray
+            
+        # Mild blur to keep lines intact but reduce grain
+        blurred = cv2.bilateralFilter(source_img, 5, 50, 50)
         
-        mask = np.zeros_like(enhanced, dtype=np.float32)
-        cv2.ellipse(mask, (pupil_x, pupil_y), axes, 0, 0, 360, 1.0, -1)
+        # High contrast CLAHE
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(blurred)
         
-        # Maskenin kenarlarını yumuşat (Hard Edge olmasın)
-        mask = cv2.GaussianBlur(mask, (21, 21), 11)
+        # Adaptive Thresholding: Finds dark lines on light background
+        # Block size 15, C=3 (Tuned for thin frames)
+        edges = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                      cv2.THRESH_BINARY_INV, 15, 3)
         
-        # 2. Görüntüyü Ağır Bulanıklaştır (Doku kaybı)
-        heavy_blur = cv2.GaussianBlur(enhanced, (99, 99), 30)
-        
-        # 3. Blend (Karıştır)
-        enhanced_blended = (enhanced * (1.0 - mask) + heavy_blur * mask).astype(np.uint8)
+        # Filter out tiny noise specks (salt-and-pepper noise)
+        edges = cv2.medianBlur(edges, 3)
         
         if DEBUG_MODE and debug_prefix:
-            # VISUALIZATION: Nereyi banladığımızı açıkça göster
-            ban_vis = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
-            cv2.ellipse(ban_vis, (pupil_x, pupil_y), axes, 0, 0, 360, (0, 255, 255), 2) # Cyan Elips
-            cv2.circle(ban_vis, (pupil_x, pupil_y), 5, (0, 0, 255), -1) # Kırmızı Nokta
-            cv2.imwrite(str(debug_path / f"{debug_prefix}_02_eye_ban_vis.png"), ban_vis)
+            cv2.imwrite(str(Path(DEBUG_FOLDER) / f"{debug_prefix}_edges_adaptive_raw.png"), edges)
             
-            # Bulanıklaştırılmış "Nuked" halini kaydet
-            cv2.imwrite(str(debug_path / f"{debug_prefix}_03_nuked_eye.png"), enhanced_blended)
+    else:
+        # STRATEGY: Standard Canny (Normal/Relaxed)
+        blurred = cv2.bilateralFilter(roi_gray, 9, 75, 75)
         
-        enhanced = enhanced_blended
+        clip_limit = 2.0 if sensitivity == 'normal' else 4.0
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8,8))
+        enhanced = clahe.apply(blurred)
+        
+        # -- STEP 0: PUPIL DETECTION (Her şeyden önce) --
+        # Göz merkezini bul (Always run this)
+        # CHANGE: Tightened margins to 0.30 (Central 40% only)
+        margin_h = int(h_roi * 0.30)
+        margin_w = int(w_roi * 0.30)
+        center_roi = enhanced[margin_h:-margin_h, margin_w:-margin_w]
+        # Extract color ROI as well
+        if roi_color_crop is not None:
+             center_roi_color = roi_color_crop[margin_h:-margin_h, margin_w:-margin_w]
+        else:
+             center_roi_color = None
+        
+        pupil_x, pupil_y = w_roi // 2, h_roi // 2 # Default center
+        if center_roi.size > 0:
+            # YENİ: get_precise_pupil_center ile sağlam göz bebeği tespiti
+            # (Glare removal + Morph opening + Gaussian center bias)
+            rel_x, rel_y = get_precise_pupil_center(center_roi)
+            pupil_x = rel_x + margin_w
+            pupil_y = rel_y + margin_h
+                 
+        if DEBUG_MODE and debug_prefix:
+            # DEBUG: Göz tespitinin sonucunu hemen göster
+            debug_path = Path("debug")
+            debug_path.mkdir(exist_ok=True)
+            pupil_vis = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+            cv2.circle(pupil_vis, (pupil_x, pupil_y), 5, (0, 0, 255), -1)
+            cv2.imwrite(str(debug_path / f"{debug_prefix}_01_pupil_loc.png"), pupil_vis)
 
-    # 2. Kenar Tespiti
-    v = np.median(enhanced)
-    sigma = 0.33 if sensitivity == 'normal' else 0.50
-    lower = int(max(0, (1.0 - sigma) * v))
-    upper = int(min(255, (1.0 + sigma) * v))
-    edges = cv2.Canny(enhanced, lower, upper)
+        if use_mask:
+            # DYNAMIC PUPIL BLURRING (Akıllı Göz Bulanıklaştırma)
+            # Bulduğumuz pupil noktasına göre devasa alanı blurla.
+            
+            # 1. Yumuşak Maske Oluştur
+            # CHANGE: Alan son kez ayarlandı (%18 Width, %16 Height)
+            # User Feedback: "genişlik 18 yükseklik 16 olsun"
+            axes = (int(w_roi * 0.18), int(h_roi * 0.15))
+            
+            mask = np.zeros_like(enhanced, dtype=np.float32)
+            cv2.ellipse(mask, (pupil_x, pupil_y), axes, 0, 0, 360, 1.0, -1)
+            
+            # Maskenin kenarlarını yumuşat (Hard Edge olmasın)
+            mask = cv2.GaussianBlur(mask, (21, 21), 11)
+            
+            # 2. Görüntüyü Ağır Bulanıklaştır (Doku kaybı)
+            heavy_blur = cv2.GaussianBlur(enhanced, (99, 99), 30)
+            
+            # 3. Blend (Karıştır)
+            enhanced_blended = (enhanced * (1.0 - mask) + heavy_blur * mask).astype(np.uint8)
+            
+            if DEBUG_MODE and debug_prefix:
+                # VISUALIZATION: Nereyi banladığımızı açıkça göster
+                ban_vis = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+                cv2.ellipse(ban_vis, (pupil_x, pupil_y), axes, 0, 0, 360, (0, 255, 255), 2) # Cyan Elips
+                cv2.circle(ban_vis, (pupil_x, pupil_y), 5, (0, 0, 255), -1) # Kırmızı Nokta
+                cv2.imwrite(str(debug_path / f"{debug_prefix}_02_eye_ban_vis.png"), ban_vis)
+                
+                # Bulanıklaştırılmış "Nuked" halini kaydet
+                cv2.imwrite(str(debug_path / f"{debug_prefix}_03_nuked_eye.png"), enhanced_blended)
+            
+            enhanced = enhanced_blended
+
+        # 2. Kenar Tespiti
+        v = np.median(enhanced)
+        sigma = 0.33 if sensitivity == 'normal' else 0.50
+        lower = int(max(0, (1.0 - sigma) * v))
+        upper = int(min(255, (1.0 + sigma) * v))
+        edges = cv2.Canny(enhanced, lower, upper)
+    
+    # Use pupil_center if provided (for metallic mode)
+    if pupil_center is not None:
+        pupil_x, pupil_y = pupil_center
+    elif sensitivity != 'metallic':
+        # For non-metallic modes, pupil was calculated above
+        pass
+    else:
+        # Metallic mode fallback
+        pupil_x, pupil_y = w_roi // 2, h_roi // 2
     
     # 3. Morfolojik Kapatma (Boşluk Doldurma)
     # Çerçeve kırıksa birleştir. Yatay kernel kullanıyoruz.
-    k_size = (3, 3) if sensitivity == 'normal' else (5, 5) 
+    if sensitivity == 'metallic':
+        k_size = (3, 3)  # For adaptive threshold, lines are already "thick"
+    else:
+        k_size = (3, 3) if sensitivity == 'normal' else (5, 5) 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, k_size)
     # Iteration parametrik yapıldı (Smart Retry için)
     closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=morph_iters)
@@ -446,11 +565,78 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
     # Puana göre sırala (En yüksek puan en üstte)
     candidates.sort(key=lambda x: x[0], reverse=True)
     
-    # En iyi adayı al
-    best_cnt = candidates[0][1]
+    # --- GEOMETRIC COMPLETION (For Metallic Mode) ---
+    # User: "Predict glass frame using estimated diameter as reference"
+    if sensitivity == 'metallic' and pupil_center is not None and candidates:
+        px, py = pupil_center
+        rim_points = []
+        
+        # Look at more candidates than just the top one
+        for _, cnt in candidates[:10]:
+            # Calculate distance of this fragment from pupil
+            mx, my = cv2.boundingRect(cnt)[0:2]
+            dist = np.sqrt((mx - px)**2 + (my - py)**2)
+            
+            # If fragment is roughly on the predicted rim (60% to 200% of expected radius)
+            # CHANGE: Increased min distance from 0.4 to 0.6 to avoid detecting the eye itself
+            if est_frame_radius * 0.6 < dist < est_frame_radius * 2.0:
+                rim_points.append(cnt)
+        
+        # Merge points from valid contours
+        combined_points = []
+        if rim_points:
+            combined_points = np.vstack(rim_points)
+            
+        # FALLBACK: If contours didn't give enough points, try Radial Scan (Direct Edge Search)
+        if len(combined_points) < 50: # Arbitrary threshold for "enough evidence"
+            # Use raw gray image for scanning
+            # Enable guided mode if we have a specific target radius
+            scan_points = radial_edge_scan(roi_gray, (px, py), est_frame_radius, guided_mode=(guided_radius is not None))
+            if len(scan_points) > 0:
+                # Convert scan_points to contour format (3D: [n, 1, 2])
+                scan_points_3d = scan_points.reshape(-1, 1, 2)
+                if len(combined_points) > 0:
+                    combined_points = np.vstack([combined_points, scan_points_3d])
+                else:
+                    combined_points = scan_points_3d
+                    
+        if len(combined_points) >= 5:
+            # CHANGE: Use Convex Hull instead of FitEllipse
+            # User: "Right frame is plain circle, no corners... looks hand drawn"
+            # Convex Hull connects the actual points, preserving corners/shape.
+            hull_geo = cv2.convexHull(combined_points)
+            
+            # Simple sanity check on size
+            x,y,w,h = cv2.boundingRect(hull_geo)
+            if w > est_frame_radius * 0.5 and h > est_frame_radius * 0.5:
+                best_cnt = hull_geo
+                if DEBUG_MODE and debug_prefix:
+                    print(f"      [GEO] {debug_prefix}: Completed frame using ConvexHull of {len(combined_points)} points.")
+            else:
+                best_cnt = candidates[0][1]
+        else:
+            best_cnt = candidates[0][1]
+    elif candidates:
+        # En iyi adayı al (Normal/Relaxed)
+        best_cnt = candidates[0][1]
+    else:
+        return None, debug_info
     
     # User: "Kopsa bile birleştir" -> Convex Hull uygula
     hull = cv2.convexHull(best_cnt)
+    
+    # --- INFLATION STRATEGY (User: "Left frame is small/around eye") ---
+    # We found the inner rim. Expand slightly to cover the frame thickness.
+    if inflate:
+        # Conservative expansion (15%) to match outer rim
+        inflation_factor = 1.15
+        
+        # Dynamic: If it's surprisingly small, inflate a bit more
+        hull_area = cv2.contourArea(hull)
+        if hull_area < roi_area * 0.15:
+            inflation_factor = 1.25 
+            
+        hull = scale_contour(hull, inflation_factor)
     
     if DEBUG_MODE and debug_prefix:
         debug_path = Path("debug")
@@ -489,9 +675,29 @@ def find_frame_candidate(roi_gray, roi_color_crop, eye_cascade=None, sensitivity
             
     return hull, debug_info
 
-def process_single_eye_roi(roi_gray, roi_color_crop, eye_cascade, full_image, offset_x, offset_y, debug_prefix='', forced_iters=None):
+def process_single_eye_roi(roi_gray, roi_color_crop, eye_cascade, full_image, offset_x, offset_y, debug_prefix='', forced_iters=None, guided_radius=None):
     if roi_gray.size == 0: 
         return 0, {}, 0
+
+    h_roi, w_roi = roi_gray.shape
+    roi_area = h_roi * w_roi
+    
+    # Pre-calculate pupil center for all modes (Reference for Metallic)
+    # Temporary CLAHE for pupil finding
+    tmp_clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    tmp_enhanced = tmp_clahe.apply(cv2.bilateralFilter(roi_gray, 9, 75, 75))
+    
+    margin_h = int(h_roi * 0.30)
+    margin_w = int(w_roi * 0.30)
+    center_roi = tmp_enhanced[margin_h:-margin_h, margin_w:-margin_w]
+    
+    pupil_x, pupil_y = w_roi // 2, h_roi // 2
+    if center_roi.size > 0:
+        rel_x, rel_y = get_precise_pupil_center(center_roi)
+        pupil_x = rel_x + margin_w
+        pupil_y = rel_y + margin_h
+    
+    pupil_center = (pupil_x, pupil_y)
 
     # Determine starting iterations
     # If forced_iters is provided (by Symmetry Check), use it.
@@ -503,10 +709,17 @@ def process_single_eye_roi(roi_gray, roi_color_crop, eye_cascade, full_image, of
     # Çünkü iter=2 kalın çerçeve yapar, normal modun filtrelerine takılır.
     plan_a_sensitivity = 'relaxed' if forced_iters else 'normal'
     
+    # Default: inflate=False (Keep normal images normal)
     best_cnt, debug_info_normal = find_frame_candidate(
         roi_gray, roi_color_crop=roi_color_crop, eye_cascade=eye_cascade, sensitivity=plan_a_sensitivity, debug_prefix=f"{debug_prefix}_normal", 
-        morph_iters=start_iters
+        morph_iters=start_iters, pupil_center=pupil_center, inflate=False
     )
+    
+    # Validation: If Plan A result is weak (too small), discard it to try harder modes
+    if best_cnt is not None:
+        if cv2.contourArea(best_cnt) < roi_area * 0.10:
+            best_cnt = None
+            debug_info_normal['discarded'] = 'too_small_force_next'
     
     # 2. SMART RETRY MANTIĞI
     # Durum 1: Hiçbir şey bulunamadı.
@@ -547,9 +760,26 @@ def process_single_eye_roi(roi_gray, roi_color_crop, eye_cascade, full_image, of
 
     # PLAN B: Relaxed Mode
     debug_info_relaxed = {}
-    if best_cnt is None:
+    if best_cnt is None and forced_iters is None:
+        # Only run relaxed if we aren't ALREADY running forced relaxed
         best_cnt, debug_info_relaxed = find_frame_candidate(
-            roi_gray, roi_color_crop=roi_color_crop, eye_cascade=eye_cascade, sensitivity='relaxed', debug_prefix=f"{debug_prefix}_relaxed", morph_iters=start_iters + 1
+            roi_gray, roi_color_crop=roi_color_crop, eye_cascade=eye_cascade, sensitivity='relaxed', debug_prefix=f"{debug_prefix}_relaxed", 
+            morph_iters=start_iters + 1, pupil_center=pupil_center, inflate=False
+        )
+        if best_cnt is not None:
+            if cv2.contourArea(best_cnt) < roi_area * 0.10:
+                best_cnt = None
+                debug_info_relaxed['discarded'] = 'too_small_force_metallic'
+
+    # PLAN C: Metallic Mode (The "Prediction" Mode)
+    debug_info_metallic = {}
+    if best_cnt is None:
+        # Run this even if forced_iters is set (Symmetry Retry should use this new power!)
+        # INFLATE IS ENABLED HERE (Only for the hard cases)
+        # Pass guided_radius if available
+        best_cnt, debug_info_metallic = find_frame_candidate(
+            roi_gray, roi_color_crop=roi_color_crop, eye_cascade=eye_cascade, sensitivity='metallic', debug_prefix=f"{debug_prefix}_metallic", 
+            morph_iters=start_iters + 1, pupil_center=pupil_center, inflate=True, guided_radius=guided_radius
         )
         
     found_area = 0
@@ -558,20 +788,27 @@ def process_single_eye_roi(roi_gray, roi_color_crop, eye_cascade, full_image, of
         found_area = cv2.contourArea(best_cnt)
         best_cnt_offset = best_cnt + [offset_x, offset_y]
         
+        mode_used = 'normal'
+        if debug_info_metallic.get('total_contours', 0) > 0: mode_used = 'metallic'
+        elif debug_info_relaxed.get('total_contours', 0) > 0: mode_used = 'relaxed'
+        
         combined_debug = {
-            'mode_used': 'normal' if debug_info_relaxed.get('total_contours', 0) == 0 else 'relaxed',
+            'mode_used': mode_used,
             'normal': debug_info_normal,
             'retry': debug_info_retry,
-            'relaxed': debug_info_relaxed
+            'relaxed': debug_info_relaxed,
+            'metallic': debug_info_metallic
         }
-        return 1, combined_debug, found_area, best_cnt_offset
+        return 1, combined_debug, found_area, best_cnt_offset, pupil_center
             
     combined_debug = {
         'mode_used': 'failed',
         'normal': debug_info_normal,
-        'relaxed': debug_info_relaxed
+        'retry': debug_info_retry,
+        'relaxed': debug_info_relaxed,
+        'metallic': debug_info_metallic
     }
-    return 0, combined_debug, 0, None
+    return 0, combined_debug, 0, None, pupil_center
 
 def process_image(img_path, face_cascade, eye_cascade):
     input_path = Path(img_path)
@@ -633,7 +870,7 @@ def process_image(img_path, face_cascade, eye_cascade):
             debug_prefix = f"{input_path.stem}_face{face_idx}_{side}" if DEBUG_MODE else ""
             
             # 1. INITIAL PASS
-            hulls_found, debug_info, area, cnt_offset = process_single_eye_roi(roi_g, roi_c, eye_cascade, img, off_x, off_y, debug_prefix)
+            hulls_found, debug_info, area, cnt_offset, pupil = process_single_eye_roi(roi_g, roi_c, eye_cascade, img, off_x, off_y, debug_prefix)
             
             # Store everything needed for potential retry
             eye_args = (roi_g, roi_c, eye_cascade, img, off_x, off_y, debug_prefix)
@@ -642,6 +879,7 @@ def process_image(img_path, face_cascade, eye_cascade):
                 'debug': debug_info,
                 'area': area,
                 'cnt': cnt_offset,
+                'pupil': pupil,
                 'args': eye_args
             }
             
@@ -651,30 +889,45 @@ def process_image(img_path, face_cascade, eye_cascade):
             l_res = sides['left']
             r_res = sides['right']
             
-            l_area = l_res['area']
-            r_area = r_res['area']
+            l_cnt = l_res.get('cnt')
+            r_cnt = r_res.get('cnt')
             
-            # Eğer biri diğerinden çok daha küçükse (ör: %10 daha küçük)
-            # User Hint: "Muhtemelen göz çevresidir, denemeye devam et"
-            max_area = max(l_area, r_area)
-            if max_area > 0:
-                diff_ratio = abs(l_area - r_area) / max_area
-                if diff_ratio > 0.15: # Symmetry threshold
-                    target_side = 'left' if l_area < r_area else 'right'
-                    target_res = sides[target_side]
-                    
-                    if DEBUG_MODE:
-                        print(f"      [SYMMETRY] {filename} Face {face_idx}: {target_side.upper()} (%{diff_ratio*100:.1f} smaller) -> Retrying Force Iters=2...")
-                    
-                    # RETRY with FORCED ITERATIONS (Aggressive Join)
-                    args = target_res['args']
-                    new_found, new_debug, new_area, new_cnt = process_single_eye_roi(*args, forced_iters=2)
-                    
-                    # Update if improved (or at least valid)
+            def get_radius(cnt):
+                if cnt is None: return 0
+                _, r = cv2.minEnclosingCircle(cnt)
+                return r
+
+            l_rad = get_radius(l_cnt)
+            r_rad = get_radius(r_cnt)
+            
+            target_side = None
+            guided_r = 0
+            
+            # Logic: If one is good and other is missing or < 60% of good one
+            if l_cnt is not None and (r_cnt is None or r_rad < l_rad * 0.6):
+                target_side = 'right'
+                guided_r = l_rad
+            elif r_cnt is not None and (l_cnt is None or l_rad < r_rad * 0.6):
+                target_side = 'left'
+                guided_r = r_rad
+                
+            if target_side:
+                if DEBUG_MODE:
+                    print(f"      [SYMMETRY] {filename} Face {face_idx}: {target_side.upper()} missing/small -> Guided Retry with Radius={guided_r:.1f}...")
+                
+                target_res = sides[target_side]
+                args = target_res['args']
+                
+                new_found, new_debug, new_area, new_cnt, new_pupil = process_single_eye_roi(
+                    *args, forced_iters=2, guided_radius=guided_r
+                )
+                
+                if new_found:
                     sides[target_side]['found'] = new_found
                     sides[target_side]['debug'] = new_debug
                     sides[target_side]['area'] = new_area
                     sides[target_side]['cnt'] = new_cnt
+                    sides[target_side]['pupil'] = new_pupil
                     sides[target_side]['debug']['symmetry_retry'] = True
 
     # 3. CONSOLIDATE RESULTS & DRAW
@@ -708,6 +961,7 @@ def process_image(img_path, face_cascade, eye_cascade):
             normal = dbg.get('normal', {})
             retry = dbg.get('retry', {})
             relaxed = dbg.get('relaxed', {})
+            metallic = dbg.get('metallic', {})
             side = dbg.get('side', 'unknown')
             sym = dbg.get('symmetry_retry', False)
             
@@ -719,6 +973,8 @@ def process_image(img_path, face_cascade, eye_cascade):
                 print(f"      Smart Retry mod: {retry['total_contours']} kontur bulundu")
             if relaxed.get('total_contours', 0) > 0:
                 print(f"      Relaxed mod: {relaxed['total_contours']} kontur bulundu")
+            if metallic.get('total_contours', 0) > 0:
+                print(f"      Metallic mod: {metallic['total_contours']} kontur bulundu")
 
 def main():
     global DEBUG_MODE

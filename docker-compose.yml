@@ -10,3 +10,4 @@ services:
       - ./debug:/app/debug
     command: python src/main.py
 
+
