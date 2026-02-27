@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """
-Aggressive Eyeglass Detection 
+Eyeglass Detection 
 ----------------------------------------
-Priorities:
-1. Detection Rate > Aesthetics. (Find it even if it's messy).
-2. Heavy Morphological Closing to connect broken frames.
-3. Retry Mechanism: If strict parameters fail, retry with relaxed ones.
-4. RETR_TREE: Look for inner frame boundaries if outer ones are lost.
-
 """
 
 import glob

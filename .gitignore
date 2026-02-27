@@ -1,3 +1,37 @@
-/debug
-/folder
-/src/archive
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+
+# === Virtual Environment ===
+.venv/
+venv/
+env/
+
+# === macOS ===
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Project: Generated / Temporary ===
+debug/
+output/
+folder/
+src/debug/
+src/output/
+src/archive/
+
+# === Images (input images tracked separately) ===
+# input/ klasörü tracked, ama büyük ekran görüntüleri tracked olmamalı
+Screenshot*.png
