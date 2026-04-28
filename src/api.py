@@ -35,9 +35,7 @@ def get_gallery():
     for ext in image_exts:
         image_paths.extend(glob.glob(os.path.join(IMAGES_DIR, ext)))
     
-    # URL that works from the simulator (10.5.28.230 is the local IP)
     host = request.host_url
-    
     results = []
     for p in sorted(image_paths):
         fname = os.path.basename(p)
@@ -45,7 +43,24 @@ def get_gallery():
             "id": fname,
             "uri": f"{host}image/raw/{fname}"
         })
+    return jsonify(results)
+
+@app.route('/gallery/processed', methods=['GET'])
+def get_processed_gallery():
+    image_exts = ("*.png", "*.jpg", "*.jpeg")
+    image_paths = []
+    for ext in image_exts:
+        image_paths.extend(glob.glob(os.path.join(OUTPUT_DIR, ext)))
     
+    host = request.host_url
+    results = []
+    for p in sorted(image_paths):
+        fname = os.path.basename(p)
+        # Original id could be inferred but let's just return the processed uri
+        results.append({
+            "id": fname,
+            "uri": f"{host}image/processed/{fname}"
+        })
     return jsonify(results)
 
 @app.route('/image/raw/<path:filename>', methods=['GET'])

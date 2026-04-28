@@ -48,6 +48,8 @@ export default function App() {
   
   const [showGallery, setShowGallery] = useState(false);
   const [galleryImages, setGalleryImages] = useState<any[]>([]);
+  const [processedImages, setProcessedImages] = useState<any[]>([]);
+  const [galleryTab, setGalleryTab] = useState<'raw'|'processed'>('raw');
 
   // Animations
   const shutterAnim = useRef(new Animated.Value(1)).current;
@@ -73,29 +75,45 @@ export default function App() {
 
   const fetchGallery = async () => {
     try {
-      const res = await fetch(`${API_URL}/gallery`);
-      const data = await res.json();
-      setGalleryImages(data);
+      const [resRaw, resProc] = await Promise.all([
+        fetch(`${API_URL}/gallery`),
+        fetch(`${API_URL}/gallery/processed`)
+      ]);
+      setGalleryImages(await resRaw.json());
+      setProcessedImages(await resProc.json());
       setShowGallery(true);
     } catch (e) {
       Alert.alert('Connection Failed', 'Could not connect to the local API server.');
     }
   };
 
-  const selectFromGallery = (item: any) => {
+  const selectFromGallery = (item: any, isProcessed: boolean) => {
     setShowGallery(false);
-    const newPhoto: PhotoItem = {
-      id: item.id,
-      uri: item.uri,
-      timestamp: Date.now(),
-      analyzed: false,
-    };
-    if (!photos.find(p => p.id === newPhoto.id)) {
-      setPhotos(prev => [newPhoto, ...prev]);
+    
+    if (isProcessed) {
+      const newPhoto: PhotoItem = {
+        id: item.id,
+        uri: item.uri,
+        timestamp: Date.now(),
+        analyzed: true,
+        resultUri: item.uri
+      };
+      setSelectedPhoto(newPhoto);
+      setShowCamera(false);
+    } else {
+      const newPhoto: PhotoItem = {
+        id: item.id,
+        uri: item.uri,
+        timestamp: Date.now(),
+        analyzed: false,
+      };
+      if (!photos.find(p => p.id === newPhoto.id)) {
+        setPhotos(prev => [newPhoto, ...prev]);
+      }
+      setSelectedPhoto(newPhoto);
+      setShowCamera(false);
+      analyzePhoto(newPhoto);
     }
-    setSelectedPhoto(newPhoto);
-    setShowCamera(false);
-    analyzePhoto(newPhoto);
   };
 
   const analyzePhoto = async (photo: PhotoItem) => {
@@ -146,18 +164,25 @@ export default function App() {
       <Modal visible={showGallery} animationType="slide" presentationStyle="pageSheet">
         <View style={s.modalContainer}>
           <View style={s.modalHeader}>
-            <Text style={s.modalTitle}>Recents</Text>
+            <View style={s.tabContainer}>
+              <TouchableOpacity onPress={() => setGalleryTab('raw')} style={[s.tabBtn, galleryTab === 'raw' && s.tabBtnActive]}>
+                <Text style={[s.tabText, galleryTab === 'raw' && s.tabTextActive]}>Library</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setGalleryTab('processed')} style={[s.tabBtn, galleryTab === 'processed' && s.tabBtnActive]}>
+                <Text style={[s.tabText, galleryTab === 'processed' && s.tabTextActive]}>Analyzed</Text>
+              </TouchableOpacity>
+            </View>
             <TouchableOpacity onPress={() => setShowGallery(false)}>
-              <Text style={s.modalActionText}>Cancel</Text>
+              <Text style={s.modalActionText}>Close</Text>
             </TouchableOpacity>
           </View>
           <FlatList
-            data={galleryImages}
+            data={galleryTab === 'raw' ? galleryImages : processedImages}
             numColumns={3}
             keyExtractor={item => item.id}
             contentContainerStyle={{ padding: 2 }}
             renderItem={({ item }) => (
-              <TouchableOpacity style={s.modalThumb} onPress={() => selectFromGallery(item)}>
+              <TouchableOpacity style={s.modalThumb} onPress={() => selectFromGallery(item, galleryTab === 'processed')}>
                 <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} />
               </TouchableOpacity>
             )}
@@ -368,7 +393,7 @@ const s = StyleSheet.create({
   // ── MODAL GALLERY ──
   modalContainer: {
     flex: 1,
-    backgroundColor: C.bg, // using pitch black for sheet feels native on dark mode
+    backgroundColor: C.bg,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -379,6 +404,29 @@ const s = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 0.5,
     borderBottomColor: C.border,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: C.card,
+    borderRadius: 8,
+    padding: 2,
+  },
+  tabBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  tabBtnActive: {
+    backgroundColor: '#3A3A3C',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: C.textSecondary,
+  },
+  tabTextActive: {
+    color: C.white,
+    fontWeight: '600',
   },
   modalTitle: {
     fontSize: 17,
