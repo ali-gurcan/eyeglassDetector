@@ -39,6 +39,14 @@ output_trained/
 compare/
 dataset
 images/
+privateFolder/
+output_roboflow/
+output_precision/
+output_imageprocessing/
+slide/
+debug_imageprocessing/
+docs/
+
 
 # === ML Models ===
 models/*.pt

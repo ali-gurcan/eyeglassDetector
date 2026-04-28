@@ -11,8 +11,8 @@ CORS(app)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMAGES_DIR = os.path.join(BASE_DIR, 'images')
-OUTPUT_DIR = os.path.join(BASE_DIR, 'output_trained')
-MODEL_PATH = os.path.join(BASE_DIR, 'runs/segment/runs/segment/eyeglass/weights/best.pt')
+OUTPUT_DIR = os.path.join(BASE_DIR, 'runs/segment/glass_project/debug_final_results')
+MODEL_PATH = os.path.join(BASE_DIR, 'runs/segment/glass_project/v2_high_res_small2/weights/best.pt')
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -84,7 +84,7 @@ def analyze_image(filename):
     if img is None:
         return jsonify({"error": "Cannot read image"}), 500
 
-    results = model.predict(img, conf=0.25, verbose=False)
+    results = model.predict(img, conf=0.25, verbose=False, retina_masks=True, imgsz=1024)
     result = results[0]
 
     out = img.copy()

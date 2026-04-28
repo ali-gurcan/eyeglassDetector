@@ -112,11 +112,11 @@ export default function App() {
       }
       setSelectedPhoto(newPhoto);
       setShowCamera(false);
-      analyzePhoto(newPhoto);
     }
   };
 
   const analyzePhoto = async (photo: PhotoItem) => {
+    if (isAnalyzing) return;
     setIsAnalyzing(true);
     try {
       const res = await fetch(`${API_URL}/analyze/${photo.id}`, { method: 'POST' });
@@ -156,37 +156,54 @@ export default function App() {
     );
   }
 
+  const handleMainAction = () => {
+    if (showCamera) {
+      takePhoto();
+    } else if (selectedPhoto && !selectedPhoto.analyzed) {
+      analyzePhoto(selectedPhoto);
+    } else {
+      setShowCamera(true);
+    }
+  };
+
   return (
     <View style={s.container}>
       <StatusBar barStyle="light-content" />
 
       {/* ─── GALLERY MODAL (iOS Sheet Style) ─── */}
-      <Modal visible={showGallery} animationType="slide" presentationStyle="pageSheet">
-        <View style={s.modalContainer}>
-          <View style={s.modalHeader}>
-            <View style={s.tabContainer}>
-              <TouchableOpacity onPress={() => setGalleryTab('raw')} style={[s.tabBtn, galleryTab === 'raw' && s.tabBtnActive]}>
-                <Text style={[s.tabText, galleryTab === 'raw' && s.tabTextActive]}>Library</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setGalleryTab('processed')} style={[s.tabBtn, galleryTab === 'processed' && s.tabBtnActive]}>
-                <Text style={[s.tabText, galleryTab === 'processed' && s.tabTextActive]}>Analyzed</Text>
+      <Modal visible={showGallery} animationType="slide" transparent={true} statusBarTranslucent>
+        <View style={s.modalOverlay}>
+          <TouchableOpacity 
+            activeOpacity={1} 
+            style={s.modalHeaderGap} 
+            onPress={() => setShowGallery(false)} 
+          />
+          <View style={s.modalContainer}>
+            <View style={s.modalHeader}>
+              <View style={s.tabContainer}>
+                <TouchableOpacity onPress={() => setGalleryTab('raw')} style={[s.tabBtn, galleryTab === 'raw' && s.tabBtnActive]}>
+                  <Text style={[s.tabText, galleryTab === 'raw' && s.tabTextActive]}>Library</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setGalleryTab('processed')} style={[s.tabBtn, galleryTab === 'processed' && s.tabBtnActive]}>
+                  <Text style={[s.tabText, galleryTab === 'processed' && s.tabTextActive]}>Analyzed</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity onPress={() => setShowGallery(false)}>
+                <Text style={s.modalActionText}>Close</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => setShowGallery(false)}>
-              <Text style={s.modalActionText}>Close</Text>
-            </TouchableOpacity>
+            <FlatList
+              data={galleryTab === 'raw' ? galleryImages : processedImages}
+              numColumns={3}
+              keyExtractor={item => item.id}
+              contentContainerStyle={{ padding: 2 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity style={s.modalThumb} onPress={() => selectFromGallery(item, galleryTab === 'processed')}>
+                  <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} />
+                </TouchableOpacity>
+              )}
+            />
           </View>
-          <FlatList
-            data={galleryTab === 'raw' ? galleryImages : processedImages}
-            numColumns={3}
-            keyExtractor={item => item.id}
-            contentContainerStyle={{ padding: 2 }}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={s.modalThumb} onPress={() => selectFromGallery(item, galleryTab === 'processed')}>
-                <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} />
-              </TouchableOpacity>
-            )}
-          />
         </View>
       </Modal>
 
@@ -253,10 +270,10 @@ export default function App() {
             activeOpacity={1}
             onPressIn={handleShutterPressIn}
             onPressOut={handleShutterPressOut}
-            onPress={showCamera ? takePhoto : () => setShowCamera(true)}
-            style={s.shutterOuter}
+            onPress={handleMainAction}
+            style={[s.shutterOuter, !showCamera && selectedPhoto && !selectedPhoto.analyzed && { borderColor: C.blue }]}
           >
-            <View style={s.shutterInner} />
+            <View style={[s.shutterInner, !showCamera && selectedPhoto && !selectedPhoto.analyzed && { backgroundColor: C.blue }]} />
           </TouchableOpacity>
         </Animated.View>
 
@@ -391,16 +408,26 @@ const s = StyleSheet.create({
   },
 
   // ── MODAL GALLERY ──
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  modalHeaderGap: {
+    height: 110, // Logo ve Header'ın görüneceği boşluk
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: C.bg,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 24,
+    paddingTop: 20,
     paddingBottom: 16,
     borderBottomWidth: 0.5,
     borderBottomColor: C.border,
