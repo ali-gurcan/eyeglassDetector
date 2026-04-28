@@ -128,7 +128,7 @@ export default function App() {
           <Ionicons name="camera" size={64} color={C.white} style={{ marginBottom: 24 }} />
           <Text style={s.permTitle}>Camera Access</Text>
           <Text style={s.permDesc}>
-            LensAI needs access to your camera to detect eyeglasses and frames in real-time.
+            eyeglassDetection needs access to your camera to detect eyeglasses and frames in real-time.
           </Text>
           <TouchableOpacity style={s.permBtn} onPress={requestPermission}>
             <Text style={s.permBtnText}>Allow Access</Text>
@@ -167,7 +167,8 @@ export default function App() {
 
       {/* ─── HEADER ─── */}
       <View style={s.header}>
-        <Text style={s.headerTitle}>LensAI</Text>
+        <Ionicons name="glasses-outline" size={28} color={C.white} style={{ marginRight: 8 }} />
+        <Text style={s.headerTitle}>eyeglassDetection</Text>
       </View>
 
       {/* ─── MAIN VIEWFINDER ─── */}
@@ -254,6 +255,8 @@ const s = StyleSheet.create({
 
   // ── HEADER ──
   header: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingHorizontal: 24,
     paddingBottom: 16,

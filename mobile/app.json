@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "LensAI",
-    "slug": "lensai",
+    "name": "eyeglassDetection",
+    "slug": "eyeglassDetection",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
