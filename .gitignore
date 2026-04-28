@@ -18,6 +18,9 @@ env/
 .AppleDouble
 .LSOverride
 
+# === Secrets ===
+.env
+
 # === IDE ===
 .vscode/
 .idea/
@@ -31,6 +34,24 @@ folder/
 src/debug/
 src/output/
 src/archive/
+output_roboflow/
+output_trained/
+compare/
+dataset
+images/
+
+# === ML Models ===
+models/*.pt
+models/*.pth
+models/*.onnx
+runs/
+yolov8*.pt
+
+# === Mobile (React Native / Expo) ===
+mobile/node_modules/
+mobile/.expo/
+mobile/ios/
+mobile/android/
 
 # === Images (input images tracked separately) ===
 # input/ klasörü tracked, ama büyük ekran görüntüleri tracked olmamalı

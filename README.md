@@ -1,8 +1,11 @@
 # Gözlük Çerçevesi Tespiti (Glasses Frame Detection)
 
-Bu proje, **Digital Image Processing (CSE4xx)** dersi kapsamında geliştirilmiş olup, geleneksel görüntü işleme teknikleri kullanarak insan yüzündeki gözlük çerçevelerini tespit etmeyi ve işaretlemeyi amaçlar.
+Bu proje, **Digital Image Processing (CSE4xx)** dersi kapsamında geliştirilmiş olup, insan yüzündeki gözlük çerçevelerini tespit etmeyi ve işaretlemeyi amaçlar.
 
-Derin öğrenme (Deep Learning) modelleri yerine, **OpenCV** kütüphanesi ile temel görüntü işleme algoritmaları (Kenar tespiti, Morfolojik işlemler, ROI analizi) kullanılarak algoritmik bir yaklaşım sergilenmiştir.
+Proje iki farklı tespit pipeline'ı sunar:
+
+1. **Model Tabanlı (Hugging Face):** `glasses-detector` kütüphanesinin Hugging Face üzerindeki pre-trained lens segmentasyon modeli ile cam alanlarını tespit eder (IoU: 0.9041).
+2. **Geleneksel CV:** OpenCV ile kenar tespiti, morfolojik işlemler ve ROI analizi kullanarak algoritmik tespit yapar.
 
 ## 🎯 Proje Özellikleri
 
@@ -27,10 +30,12 @@ Başarılı tespitlerden 18 görüntüde 2 çerçeve, 1 görüntüde 1 çerçeve
 
 ## 🛠️ Kullanılan Teknolojiler
 
-* **Dil:** Python 3.x
+* **Dil:** Python 3.12+
 * **Kütüphaneler:**
     * `OpenCV (cv2)`: Görüntü işleme algoritmaları için.
     * `NumPy`: Matris işlemleri için.
+    * `glasses-detector`: Hugging Face pre-trained lens segmentasyon modeli.
+    * `PyTorch`: glasses-detector backend (otomatik kurulur).
 
 ## 🚀 Kurulum
 
@@ -62,12 +67,41 @@ docker-compose up
 
 ## ▶️ Çalıştırma
 
-### Batch Modu (Tüm Resimleri İşle)
+### Model Pipeline (Hugging Face)
 
-Varsayılan çalışma şekli batch modudur; `images/` klasöründeki tüm resimleri işler ve sonuçları `output/` klasörüne kaydeder:
+Model ağırlıkları ilk çalıştırmada Hugging Face'den otomatik indirilir. Manuel indirme gerekmez.
 
 ```bash
-# Virtual environment ile
+source .venv/bin/activate
+
+# Varsayılan ayarlarla çalıştır (medium model)
+python src/model_main.py
+
+# Model boyutunu seç: small (hızlı), medium (dengeli), large (yüksek doğruluk)
+python src/model_main.py --size small
+python src/model_main.py --size large
+
+# Model sonuç üretmezse geleneksel CV'ye düş
+python src/model_main.py --fallback
+
+# Debug modu (maske görüntüleri ve detaylı log)
+python src/model_main.py --debug
+
+# Tüm seçenekleri birlikte kullan
+python src/model_main.py --size medium --fallback --debug
+```
+
+**Model Performansları:**
+
+| Boyut | IoU | Dice | Dosya Boyutu |
+|-------|-----|------|-------------|
+| small | 0.8309 | 0.9076 | 0.92 MB |
+| medium | 0.9041 | 0.9496 | 12.47 MB |
+| large | TBA | TBA | 198.74 MB |
+
+### Geleneksel CV Pipeline
+
+```bash
 source .venv/bin/activate
 python src/main.py
 
@@ -75,13 +109,12 @@ python src/main.py
 python src/main.py --debug
 ```
 
-Debug modu, işleme adımlarının ara görüntülerini `debug/` klasörüne kaydeder.
+Her iki pipeline da `images/` klasöründeki tüm resimleri işler ve sonuçları `output/` klasörüne kaydeder. Debug modu ara görüntüleri `debug/` klasörüne kaydeder.
 
-> **Not:** Sisteminizde OpenCV'nin dahili Haar cascade dosyaları yoksa,
+> **Not:** Geleneksel CV pipeline için sisteminizde Haar cascade dosyaları gereklidir.
 > `haarcascades/haarcascade_frontalface_default.xml` ve
 > `haarcascades/haarcascade_eye_tree_eyeglasses.xml` dosyalarını `haarcascades/` klasörüne
-> indirmeniz gerekir. OpenCV'nin resmi GitHub deposundaki XML dosyaları
-> kullanılabilir.
+> indirmeniz gerekir.
 
 ## 📂 Proje Yapısı
 
@@ -89,7 +122,8 @@ Debug modu, işleme adımlarının ara görüntülerini `debug/` klasörüne kay
 glass/
 │
 ├── src/
-│   └── main.py          # Ana uygulama kodu
+│   ├── model_main.py    # Hugging Face model segmentasyon pipeline
+│   └── main.py          # Geleneksel CV pipeline
 ├── images/              # Test edilecek örnek fotoğraflar
 ├── output/              # İşlenmiş ve işaretlenmiş çıktıların kaydedildiği klasör
 ├── haarcascades/        # Haar Cascade XML model dosyaları
@@ -108,7 +142,26 @@ Proje kaynak kodu ve dokümantasyon:
 
 ## 📝 Algoritma Akışı
 
-### Genel Akış
+### Model Pipeline (model_main.py)
+
+```
+main()
+  ↓
+1. GlassesSegmenter yükle (Hugging Face'den otomatik)
+   - kind="lenses", size="medium"
+  ↓
+2. Output klasörünü temizle
+  ↓
+3. images/ klasöründeki tüm resimleri bul
+  ↓
+4. Her resim için:
+   ├─ Segmentasyon inference çalıştır
+   ├─ Binary maske → konturlara dönüştür (findContours + convexHull)
+   ├─ Sonuç varsa → konturu çiz (sarı) → kaydet
+   └─ Sonuç yoksa + --fallback → geleneksel CV pipeline'a düş
+```
+
+### Geleneksel CV Pipeline (main.py) — Genel Akış
 
 ```
 main() 

@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "LensAI",
+    "slug": "lensai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A1628"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "LensAI needs camera access to detect eyeglass lenses.",
+        "NSPhotoLibraryUsageDescription": "LensAI needs photo library access to analyze your photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A1628"
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "LensAI needs camera access to detect eyeglass lenses."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "LensAI needs photo library access to analyze your photos."
+        }
+      ]
+    ]
+  }
+}
