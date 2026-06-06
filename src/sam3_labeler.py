@@ -1,17 +1,22 @@
 import os
 import cv2
 import torch
+# SAM3 Processor'ın kendi içinde MPS'i kontrol edip bazı tensörleri GPU'ya atmasını 
+# (ve dolayısıyla weight-input uyuşmazlığını) engellemek için MPS'i PyTorch seviyesinde gizliyoruz:
+if hasattr(torch.backends, 'mps'):
+    torch.backends.mps.is_available = lambda: False
+    torch.backends.mps.is_built = lambda: False
+
 import numpy as np
 from PIL import Image
 from pathlib import Path
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
 
+import argparse
+
 # --- Configuration ---
-INPUT_FOLDER = 'images'
-OUTPUT_FOLDER = 'sam3_labeled_dataset'
-os.makedirs(os.path.join(OUTPUT_FOLDER, 'images'), exist_ok=True)
-os.makedirs(os.path.join(OUTPUT_FOLDER, 'labels'), exist_ok=True)
+# Klasör yolları artık main() içerisinde terminal argümanı olarak (veya varsayılan olarak) belirlenecek.
 
 PROMPTS = [
     {
@@ -27,7 +32,23 @@ PROMPTS = [
 ]
 
 def main():
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=str, default="images", help="Girdi görsellerinin klasör yolu")
+    parser.add_argument("--output", type=str, default="sam3_labeled_dataset", help="Çıktı klasör yolu")
+    args = parser.parse_args()
+
+    INPUT_FOLDER = args.input
+    OUTPUT_FOLDER = args.output
+
+    os.makedirs(os.path.join(OUTPUT_FOLDER, 'images'), exist_ok=True)
+    os.makedirs(os.path.join(OUTPUT_FOLDER, 'labels'), exist_ok=True)
+
+    if torch.cuda.is_available():
+        device = "cuda" # Colab T4 GPU için
+    else:
+        # Apple Silicon (MPS) üzerindeki PyTorch uyumsuzluğunu önlemek için Mac'te mecburen CPU
+        device = "cpu"
+        
     print(f"Using device: {device}")
     
     try:
@@ -54,24 +75,27 @@ def main():
         yolo_lines = []
 
         for p_info in PROMPTS:
-            # Note: SAM 3 API might vary, assuming set_text_prompt as per README content
-            # response = processor.set_text_prompt(state=inference_state, prompt=p_info["text"])
-            # Some versions might support negative prompts in a different way or via a combined string
-            full_prompt = p_info["text"]
+            # Negatif kelimeleri de metne dahil ederek modeli daha net yönlendiriyoruz
+            full_prompt = f"{p_info['text']}. Exclude: {p_info['neg']}"
             
             output = processor.set_text_prompt(state=inference_state, prompt=full_prompt)
             masks, boxes, scores = output["masks"], output["boxes"], output["scores"]
             
-            # Filter by score (e.g., > 0.5)
+            # Etiket kalitesini artırmak için düşük güven skorlu (score < 0.65) sonuçları elliyoruz
             for i in range(len(masks)):
-                if scores[i] > 0.4:
+                if scores[i] > 0.65:
                     mask = masks[i].cpu().numpy().astype(np.uint8)
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     
                     for cnt in contours:
-                        if cv2.contourArea(cnt) < 100: continue
+                        # Ufak gürültüleri (noise) etiketlememek için minimum alanı artırdık (örneğin 500)
+                        if cv2.contourArea(cnt) < 500: continue
                         
-                        pts = cnt.reshape(-1, 2)
+                        # Poligonu daha pürüzsüz ve temiz hale getirmek için yaklaşıklaştırma (smoothing)
+                        epsilon = 0.002 * cv2.arcLength(cnt, True)
+                        approx_cnt = cv2.approxPolyDP(cnt, epsilon, True)
+                        
+                        pts = approx_cnt.reshape(-1, 2)
                         yolo_pts = []
                         for px, py in pts:
                             nx = max(0.0, min(1.0, float(px) / w))
