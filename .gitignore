@@ -46,7 +46,17 @@ output_imageprocessing/
 slide/
 debug_imageprocessing/
 docs/
-
+test
+privateFolder_v3_results
+manipulated_images
+manipulated_labels
+test_sam3_labeler_out
+test_outputs
+v3_final_results
+v2_final_results
+auto_retina_dataset
+auto_labeled_dataset
+src/archive
 
 # === ML Models ===
 models/*.pt

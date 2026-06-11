@@ -17,9 +17,10 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { analyzeImage } from './modules/eyeglass-detector';
 
 const { width: W, height: H } = Dimensions.get('window');
-const API_URL = 'http://127.0.0.1:5000';
 
 const C = {
   bg: '#000000',
@@ -44,6 +45,7 @@ export default function App() {
   const [selectedPhoto, setSelectedPhoto] = useState<PhotoItem | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showCamera, setShowCamera] = useState(true);
+  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('back');
   const cameraRef = useRef<CameraView>(null);
   
   const [showGallery, setShowGallery] = useState(false);
@@ -66,71 +68,66 @@ export default function App() {
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       if (photo) {
-        Alert.alert("Camera", "Local capture requires full YOLO integration. Use Gallery to test API.");
+        const newPhoto: PhotoItem = {
+          id: Date.now().toString(),
+          uri: photo.uri,
+          timestamp: Date.now(),
+          analyzed: false,
+        };
+        setPhotos(prev => [newPhoto, ...prev]);
+        setSelectedPhoto(newPhoto);
+        setShowCamera(false);
       }
     } catch (e) {
       Alert.alert('Error', 'Failed to capture image.');
     }
   };
 
-  const fetchGallery = async () => {
-    try {
-      const [resRaw, resProc] = await Promise.all([
-        fetch(`${API_URL}/gallery`),
-        fetch(`${API_URL}/gallery/processed`)
-      ]);
-      setGalleryImages(await resRaw.json());
-      setProcessedImages(await resProc.json());
-      setShowGallery(true);
-    } catch (e) {
-      Alert.alert('Connection Failed', 'Could not connect to the local API server.');
+  const pickImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      const newPhoto: PhotoItem = {
+        id: Date.now().toString(),
+        uri: result.assets[0].uri,
+        timestamp: Date.now(),
+        analyzed: false,
+      };
+      setPhotos(prev => [newPhoto, ...prev]);
+      setSelectedPhoto(newPhoto);
+      setShowCamera(false);
     }
+  };
+
+  const fetchGallery = async () => {
+    // API is replaced by offline functionality. Opening local Image Picker instead.
+    pickImage();
   };
 
   const selectFromGallery = (item: any, isProcessed: boolean) => {
     setShowGallery(false);
-    
-    if (isProcessed) {
-      const newPhoto: PhotoItem = {
-        id: item.id,
-        uri: item.uri,
-        timestamp: Date.now(),
-        analyzed: true,
-        resultUri: item.uri
-      };
-      setSelectedPhoto(newPhoto);
-      setShowCamera(false);
-    } else {
-      const newPhoto: PhotoItem = {
-        id: item.id,
-        uri: item.uri,
-        timestamp: Date.now(),
-        analyzed: false,
-      };
-      if (!photos.find(p => p.id === newPhoto.id)) {
-        setPhotos(prev => [newPhoto, ...prev]);
-      }
-      setSelectedPhoto(newPhoto);
-      setShowCamera(false);
-    }
+    // Deprecated for offline
   };
 
   const analyzePhoto = async (photo: PhotoItem) => {
     if (isAnalyzing) return;
     setIsAnalyzing(true);
     try {
-      const res = await fetch(`${API_URL}/analyze/${photo.id}`, { method: 'POST' });
-      const data = await res.json();
-      if (data.resultUri) {
-        setPhotos(prev =>
-          prev.map(p => p.id === photo.id ? { ...p, analyzed: true, resultUri: data.resultUri } : p)
-        );
-        setSelectedPhoto(prev => 
-          prev?.id === photo.id ? { ...prev, analyzed: true, resultUri: data.resultUri } : prev
-        );
-      }
-    } catch (e) {
-      Alert.alert('Analysis Error', 'Failed to analyze the image.');
+      // Çevrimdışı Native Module Çağrısı (CoreML)
+      const resultUri = await analyzeImage(photo.uri);
+      
+      setPhotos(prev =>
+        prev.map(p => p.id === photo.id ? { ...p, analyzed: true, resultUri } : p)
+      );
+      setSelectedPhoto(prev => 
+        prev?.id === photo.id ? { ...prev, analyzed: true, resultUri } : prev
+      );
+    } catch (e: any) {
+      Alert.alert('Analysis Error', e.message || 'Failed to analyze the image offline.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -217,7 +214,7 @@ export default function App() {
       <View style={s.viewfinderOuter}>
         <View style={s.cameraWrapper}>
           {showCamera ? (
-            <CameraView ref={cameraRef} style={s.camera} facing="back" />
+            <CameraView ref={cameraRef} style={s.camera} facing={cameraFacing} />
           ) : selectedPhoto ? (
             <View style={s.camera}>
               <Image 
@@ -278,7 +275,7 @@ export default function App() {
         </Animated.View>
 
         {/* Flip / Mode (Right) */}
-        <TouchableOpacity style={s.sideButton}>
+        <TouchableOpacity style={s.sideButton} onPress={() => setCameraFacing(prev => prev === 'back' ? 'front' : 'back')}>
           <BlurView intensity={60} tint="dark" style={s.iconCircle}>
             <Ionicons name="camera-reverse" size={24} color={C.white} />
           </BlurView>

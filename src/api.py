@@ -12,7 +12,7 @@ CORS(app)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMAGES_DIR = os.path.join(BASE_DIR, 'images')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'runs/segment/glass_project/debug_final_results')
-MODEL_PATH = os.path.join(BASE_DIR, 'runs/segment/glass_project/v2_high_res_small2/weights/best.pt')
+MODEL_PATH = os.path.join(BASE_DIR, 'v3', 'best.pt')
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -24,8 +24,8 @@ except Exception as e:
     model = None
 
 COLORS = {
-    "frame": (128, 0, 0),     # navy blue
-    "glass": (0, 255, 255),   # cyan
+    "frame": (50, 205, 50),     # Canlı Yeşil (Lime Green)
+    "glass": (255, 144, 30),    # Özel Optisyen Mavisi (Electric Blue)
 }
 
 @app.route('/gallery', methods=['GET'])
@@ -94,6 +94,11 @@ def analyze_image(filename):
         for i, mask in enumerate(result.masks.xy):
             cls_id = int(result.boxes.cls[i])
             cls_name = result.names[cls_id]
+            
+            # Sadece cam (glass) sınıfını göster, çerçeveyi (frame) atla
+            if cls_name != "glass":
+                continue
+                
             conf = float(result.boxes.conf[i])
             color = COLORS.get(cls_name, (255, 255, 255))
             pts = np.array(mask, dtype=np.int32)

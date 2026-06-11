@@ -17,13 +17,18 @@
       "infoPlist": {
         "NSCameraUsageDescription": "LensAI needs camera access to detect eyeglass lenses.",
         "NSPhotoLibraryUsageDescription": "LensAI needs photo library access to analyze your photos."
-      }
+      },
+      "bundleIdentifier": "com.anonymous.eyeglassDetection"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A1628"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": [
       [
