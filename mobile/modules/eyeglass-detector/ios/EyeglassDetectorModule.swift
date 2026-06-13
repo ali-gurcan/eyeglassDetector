@@ -330,6 +330,11 @@ public class EyeglassDetectorModule: Module {
       return image
     }
     
+    // Çizim kalitesini en üst düzeye çıkar
+    ctx.setAllowsAntialiasing(true)
+    ctx.setShouldAntialias(true)
+    ctx.interpolationQuality = .high
+    
     for det in detections {
       let color: UIColor = det.label == "frame"
         ? UIColor(red: 50/255.0, green: 205/255.0, blue: 50/255.0, alpha: 1.0)
@@ -346,6 +351,8 @@ public class EyeglassDetectorModule: Module {
           // Python: cv2.drawContours(out, [pts], -1, color, 2)
           if let contourPath = extractContourPath(from: mask, imageSize: image.size) {
             let path = UIBezierPath(cgPath: contourPath)
+            path.lineJoinStyle = .round
+            path.lineCapStyle = .round
             
             // Maske içini doldur (fillPoly)
             color.withAlphaComponent(0.4).setFill()
@@ -467,12 +474,25 @@ public class EyeglassDetectorModule: Module {
         let fx = mx * scaleToMaskX
         let fy = my * scaleToMaskY
         
-        // Bilinear interpolation yerine nearest neighbor (hız için)
-        let ix = Int(fx)
-        let iy = Int(fy)
+        let x1 = Int(fx)
+        let y1 = Int(fy)
+        let x2 = min(x1 + 1, maskW - 1)
+        let y2 = min(y1 + 1, maskH - 1)
         
-        if ix >= 0 && ix < maskW && iy >= 0 && iy < maskH {
-          let val = maskData[iy * maskW + ix]
+        // Maske gridi sınırları içindeyse bilinear interpolation yap
+        if x1 >= 0 && x1 < maskW && y1 >= 0 && y1 < maskH {
+          let dx = fx - Float(x1)
+          let dy = fy - Float(y1)
+          
+          let v11 = maskData[y1 * maskW + x1]
+          let v12 = maskData[y1 * maskW + x2]
+          let v21 = maskData[y2 * maskW + x1]
+          let v22 = maskData[y2 * maskW + x2]
+          
+          let top = v11 + (v12 - v11) * dx
+          let bottom = v21 + (v22 - v21) * dx
+          let val = top + (bottom - top) * dy
+          
           // Python: mask > 0.5
           if val > 0.5 {
             origMask[oy * origW + ox] = 255
