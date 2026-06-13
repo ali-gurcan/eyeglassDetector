@@ -290,7 +290,8 @@ public class EyeglassDetectorModule: Module {
       var coeffs = [Float](repeating: 0, count: 32)
       for m in 0..<32 { coeffs[m] = readVal(offset: (maskStart + m) * s1 + a * s2) }
       
-      // Artık sadece 'glass' sınıfını filtrelemiyoruz. Python'daki gibi hem çerçeve hem cam tespit edilecek.
+      // Yalnızca 'glass' sınıfını (class 1) tut (çerçeveyi gösterme)
+      if bestClass != 1 { continue }
       
       let label = classNames.count > 1 ? classNames[bestClass] : "unknown"
       detections.append(Detection(rect: rect, confidence: maxConf, classIdx: bestClass,
