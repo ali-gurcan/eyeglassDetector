@@ -45,7 +45,7 @@ export default function App() {
   const [selectedPhoto, setSelectedPhoto] = useState<PhotoItem | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showCamera, setShowCamera] = useState(true);
-  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('back');
+  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
   const cameraRef = useRef<CameraView>(null);
   
   const [showGallery, setShowGallery] = useState(false);
@@ -66,7 +66,7 @@ export default function App() {
   const takePhoto = async () => {
     if (!cameraRef.current) return;
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8, mirror: false });
       if (photo) {
         const newPhoto: PhotoItem = {
           id: Date.now().toString(),
@@ -114,11 +114,16 @@ export default function App() {
   };
 
   const analyzePhoto = async (photo: PhotoItem) => {
-    if (isAnalyzing) return;
+    console.log('[DEBUG] analyzePhoto called, uri:', photo.uri);
+    if (isAnalyzing) {
+      console.log('[DEBUG] Already analyzing, returning');
+      return;
+    }
     setIsAnalyzing(true);
     try {
-      // Çevrimdışı Native Module Çağrısı (CoreML)
+      console.log('[DEBUG] Calling native analyzeImage...');
       const resultUri = await analyzeImage(photo.uri);
+      console.log('[DEBUG] analyzeImage returned:', resultUri);
       
       setPhotos(prev =>
         prev.map(p => p.id === photo.id ? { ...p, analyzed: true, resultUri } : p)
@@ -127,6 +132,7 @@ export default function App() {
         prev?.id === photo.id ? { ...prev, analyzed: true, resultUri } : prev
       );
     } catch (e: any) {
+      console.log('[DEBUG] analyzeImage error:', e.message, e);
       Alert.alert('Analysis Error', e.message || 'Failed to analyze the image offline.');
     } finally {
       setIsAnalyzing(false);
@@ -154,9 +160,11 @@ export default function App() {
   }
 
   const handleMainAction = () => {
+    console.log('[DEBUG] handleMainAction - showCamera:', showCamera, 'selectedPhoto:', !!selectedPhoto, 'analyzed:', selectedPhoto?.analyzed);
     if (showCamera) {
       takePhoto();
     } else if (selectedPhoto && !selectedPhoto.analyzed) {
+      console.log('[DEBUG] Calling analyzePhoto...');
       analyzePhoto(selectedPhoto);
     } else {
       setShowCamera(true);

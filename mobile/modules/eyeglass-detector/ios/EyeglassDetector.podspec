@@ -6,8 +6,7 @@ Pod::Spec.new do |s|
   s.author         = ''
   s.homepage       = 'https://docs.expo.dev/modules/'
   s.platforms      = {
-    :ios => '16.4',
-    :tvos => '16.4'
+    :ios => '15.1'
   }
   s.source         = { git: '' }
   s.static_framework = true
@@ -20,5 +19,5 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
-  s.resources = "**/*.mlpackage"
+  s.resources = ["**/*.mlpackage", "**/*.mlmodelc"]
 end
