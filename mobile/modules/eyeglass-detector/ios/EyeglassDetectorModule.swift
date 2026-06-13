@@ -259,17 +259,16 @@ public class EyeglassDetectorModule: Module {
     let classNames = numClasses > 1 ? ["frame", "glass"] : ["glass"]
     
     for a in 0..<numAnchors {
-      // Sınıf güvenilirliği (Python: sigmoid otomatik uygulanır)
-      var maxConf: Float = 0
-      var bestClass = 0
-      for c in 0..<numClasses {
-        // Ultralytics CoreML export otomatik olarak Decode layer ekler,
-        // bu yüzden sınıf skorları logit değil, zaten sigmoid uygulanmış olasılık (0.0 - 1.0) değerleridir.
-        // Tekrar sigmoid UYGULAMIYORUZ.
-        let conf = readVal(offset: (4 + c) * s1 + a * s2)
-        if conf > maxConf { maxConf = conf; bestClass = c }
-      }
-      if maxConf < confThreshold { continue }
+      // YOLOv8 sınıfları birbirinden bağımsızdır (mutually exclusive değildir).
+      // Masaüstündeki gibi sadece 'glass' (class 1) sınıfı üzerinde filtreleme yapıyoruz.
+      let classIdx = 1
+      guard classIdx < numClasses else { continue }
+      
+      let conf = readVal(offset: (4 + classIdx) * s1 + a * s2)
+      if conf < confThreshold { continue }
+      
+      let maxConf = conf
+      let bestClass = classIdx
       
       // Bounding box (model koordinatları, pad dahil)
       let cx = readVal(offset: 0 * s1 + a * s2)
