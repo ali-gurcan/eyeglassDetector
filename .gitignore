@@ -59,6 +59,10 @@ auto_retina_dataset
 auto_labeled_dataset
 src/archive
 
+trailer
+api.log
+Graduation Project - Latex Template
+
 # === ML Models ===
 models/*.pt
 models/*.pth

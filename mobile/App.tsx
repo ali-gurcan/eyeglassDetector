@@ -18,6 +18,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
 import { analyzeImage } from './modules/eyeglass-detector';
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -66,7 +68,7 @@ export default function App() {
   const takePhoto = async () => {
     if (!cameraRef.current) return;
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8, mirror: false });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 1, mirror: true });
       if (photo) {
         const newPhoto: PhotoItem = {
           id: Date.now().toString(),
@@ -136,6 +138,32 @@ export default function App() {
       Alert.alert('Analysis Error', e.message || 'Failed to analyze the image offline.');
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const saveToGallery = async (uri: string) => {
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'LensAI needs access to your photo library to save photos.');
+        return;
+      }
+      
+      let localUri = uri;
+      if (uri.startsWith('data:')) {
+        const base64Code = uri.split('data:image/jpeg;base64,')[1];
+        const filename = FileSystem.documentDirectory + 'analyzed_photo_' + Date.now() + '.jpg';
+        await FileSystem.writeAsStringAsync(filename, base64Code, {
+          encoding: 'base64',
+        });
+        localUri = filename;
+      }
+
+      await MediaLibrary.saveToLibraryAsync(localUri);
+      Alert.alert('Success', 'Photo saved to your gallery!');
+    } catch (error: any) {
+      console.log('[DEBUG] saveToGallery error:', error);
+      Alert.alert('Save Error', 'Failed to save photo.');
     }
   };
 
@@ -239,16 +267,27 @@ export default function App() {
                 </BlurView>
               )}
 
-              {/* iOS style close button for photo view */}
+              {/* iOS style buttons for photo view */}
               {!isAnalyzing && (
-                <TouchableOpacity 
-                  style={s.closePhotoButton} 
-                  onPress={() => setShowCamera(true)}
-                >
-                  <BlurView intensity={60} tint="dark" style={s.closePhotoBlur}>
-                    <Ionicons name="close" size={24} color={C.white} />
-                  </BlurView>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity 
+                    style={s.closePhotoButton} 
+                    onPress={() => setShowCamera(true)}
+                  >
+                    <BlurView intensity={60} tint="dark" style={s.photoOverlayBtnBlur}>
+                      <Ionicons name="close" size={24} color={C.white} />
+                    </BlurView>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={s.savePhotoButton} 
+                    onPress={() => saveToGallery(selectedPhoto.resultUri || selectedPhoto.uri)}
+                  >
+                    <BlurView intensity={60} tint="dark" style={s.photoOverlayBtnBlur}>
+                      <Ionicons name="download-outline" size={24} color={C.white} />
+                    </BlurView>
+                  </TouchableOpacity>
+                </>
               )}
             </View>
           ) : null}
@@ -351,7 +390,14 @@ const s = StyleSheet.create({
     borderRadius: 20,
     overflow: 'hidden',
   },
-  closePhotoBlur: {
+  savePhotoButton: {
+    position: 'absolute',
+    top: 24,
+    right: 24,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  photoOverlayBtnBlur: {
     width: 40,
     height: 40,
     justifyContent: 'center',

@@ -8,15 +8,25 @@
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/transparent.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0A1628"
+      "backgroundColor": "#000000"
     },
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
         "NSCameraUsageDescription": "LensAI needs camera access to detect eyeglass lenses.",
-        "NSPhotoLibraryUsageDescription": "LensAI needs photo library access to analyze your photos."
+        "NSPhotoLibraryUsageDescription": "LensAI needs photo library access to analyze your photos.",
+        "UTImportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "public.avif",
+            "UTTypeConformsTo": ["public.image"],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": ["avif"],
+              "public.mime-type": ["image/avif"]
+            }
+          }
+        ]
       },
       "bundleIdentifier": "com.anonymous.eyeglassDetection"
     },
@@ -41,6 +51,14 @@
         "expo-image-picker",
         {
           "photosPermission": "LensAI needs photo library access to analyze your photos."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "LensAI needs photo library access to save analyzed photos.",
+          "savePhotosPermission": "LensAI needs photo library access to save analyzed photos.",
+          "isAccessMediaLocationEnabled": true
         }
       ]
     ]

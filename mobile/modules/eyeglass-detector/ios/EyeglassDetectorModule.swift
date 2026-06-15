@@ -124,14 +124,8 @@ public class EyeglassDetectorModule: Module {
     // ── Step 1: UIImage orientation'ını normalize et → doğru CGImage elde et ──
     UIGraphicsBeginImageContextWithOptions(image.size, true, 1.0)
     if let ctx = UIGraphicsGetCurrentContext() {
-      // Fotoğraf çekildiğinde ön kameradan gelen aynalamayı (Y eksenine göre simetriği) iptal et
-      switch image.imageOrientation {
-      case .upMirrored, .downMirrored, .leftMirrored, .rightMirrored:
-        ctx.translateBy(x: image.size.width, y: 0)
-        ctx.scaleBy(x: -1.0, y: 1.0)
-      default:
-        break
-      }
+      // image.draw(at:) will automatically respect the EXIF orientation metadata.
+      // We don't need to manually flip it, otherwise it causes a double-mirror effect.
     }
     image.draw(at: .zero)
     guard let normalizedImage = UIGraphicsGetImageFromCurrentImageContext() else {
@@ -353,13 +347,9 @@ public class EyeglassDetectorModule: Module {
             path.lineJoinStyle = .round
             path.lineCapStyle = .round
             
-            // Maske içini doldur (fillPoly)
-            color.withAlphaComponent(0.4).setFill()
-            path.fill()
-            
-            // Maske sınırını çiz (drawContours)
+            // Sadece sınırları (kenarları) çiz, içini doldurma
             color.setStroke()
-            path.lineWidth = 2.0
+            path.lineWidth = 3.0 // Kenarları biraz daha belirginleştirdik
             path.stroke()
           }
         }
